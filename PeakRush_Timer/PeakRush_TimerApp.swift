@@ -25,29 +25,16 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
         
         // Set up audio session for background playback
-        setupAudioSession()
+        AudioManager.shared.setupAudioSession()
         
         return true
     }
     
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // Ensure audio session remains active in background
-        setupAudioSession()
+        // No need to reconfigure audio session here - AudioManager handles it
     }
     
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // Refresh audio session when returning to foreground
-        setupAudioSession()
-    }
-    
-    private func setupAudioSession() {
-        do {
-            // Configure audio session for background playback
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-            print("Audio session configured for background playback")
-        } catch {
-            print("Failed to set up audio session: \(error.localizedDescription)")
-        }
+        // No need to reconfigure audio session here - AudioManager handles it
     }
 }

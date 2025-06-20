@@ -17,7 +17,7 @@ struct TimerRunView: View {
     @State private var isTimerRunning: Bool = false
     @State private var timer: Timer?
     @State private var isTimerCompleted: Bool = false
-    @State private var currentIntensity: Bool = true
+    @State private var isCurrentIntensityLow: Bool = true
     
     @State private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     @State private var lastActiveTimestamp: Date = Date()
@@ -55,7 +55,7 @@ struct TimerRunView: View {
                 endPoint: .bottomTrailing
             )
         } else {
-            if currentIntensity {
+            if isCurrentIntensityLow {
                 return LinearGradient(
                     colors: [.green, .green],
                     startPoint: .topLeading,
@@ -77,7 +77,7 @@ struct TimerRunView: View {
         } else if isTimerCompleted {
             return "Completed!"
         } else {
-            return currentIntensity ? "Low Intensity" : "High Intensity"
+            return isCurrentIntensityLow ? "Low Intensity" : "High Intensity"
         }
     }
     
@@ -106,26 +106,12 @@ struct TimerRunView: View {
                     }
                         
                     Spacer()
-                        
-                    VStack(spacing: 4) {
-                        Text("PeakRush")
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundStyle(.primary)
-                    }
-                        
-                    Spacer()
-                    
-                    Button {} label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.title3)
-                            Text("Back")
-                                .font(.subheadline)
-                        }
-                        .foregroundStyle(.clear)
-                    }
-                    .disabled(true)
                 }
+                .overlay(
+                    Text("PeakRush")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
+                )
                 .padding(.horizontal, 20)
                 .padding(.top, 10)
                     
@@ -178,38 +164,55 @@ struct TimerRunView: View {
                 }
                 .padding(.horizontal, 20)
                 
-                ZStack {
-                    Circle()
-                        .stroke(Color(.systemGray), lineWidth: 8)
-                        .frame(width: 250, height: 250)
+                VStack(spacing: 16) {
+                    Text(intensityText)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundStyle({
+                            if isTimerCompleted {
+                                Color.blue
+                            } else if !isTimerRunning {
+                                Color.black
+                            } else {
+                                isCurrentIntensityLow ? Color.green : Color.red
+                            }
+                        }())
+                        .multilineTextAlignment(.center)
                     
-                    Circle()
-                        .stroke(circleColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                        .frame(width: 250, height: 250)
-                    
-                    VStack(spacing: 8) {
-                        Image(systemName: currentIntensity ? "figure.walk" : "figure.run")
-                            .font(.largeTitle)
-                            .foregroundStyle({
-                                if isTimerCompleted {
-                                    Color.blue
-                                } else if !isTimerRunning {
-                                    Color.gray
-                                } else {
-                                    currentIntensity ? Color.green : Color.red
-                                }
-                            }())
+                    ZStack {
+                        Circle()
+                            .stroke(Color(.systemGray), lineWidth: 8)
+                            .frame(width: 250, height: 250)
                         
-                        Text("\(String(format: "%02d", currentMinutes)):\(String(format: "%02d", currentSeconds))")
-                            .font(.system(size: 48, weight: .bold, design: .monospaced))
-                            .foregroundStyle(.primary)
+                        Circle()
+                            .stroke(circleColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                            .frame(width: 250, height: 250)
                         
-                        Text("Set \(currentSet)/\(sets)")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.black)
+                        VStack(spacing: 8) {
+                            Image(systemName: isCurrentIntensityLow ? "figure.walk" : "figure.run")
+                                .font(.largeTitle)
+                                .foregroundStyle({
+                                    if isTimerCompleted {
+                                        Color.blue
+                                    } else if !isTimerRunning {
+                                        Color.gray
+                                    } else {
+                                        isCurrentIntensityLow ? Color.green : Color.red
+                                    }
+                                }())
+                            
+                            Text("\(String(format: "%02d", currentMinutes)):\(String(format: "%02d", currentSeconds))")
+                                .font(.system(size: 48, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.primary)
+                            
+                            Text("Set \(currentSet)/\(sets)")
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.black)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
                     
                 Spacer()
@@ -235,7 +238,7 @@ struct TimerRunView: View {
                             .padding(.vertical, 16)
                             .background(
                                 LinearGradient(
-                                    colors: isTimerRunning ? [.blue, .cyan] : [.green, .green],
+                                    colors: isTimerRunning ? [.blue, .blue] : [.green, .green],
                                     startPoint: .leading,
                                     endPoint: .trailing
                                 )
@@ -296,7 +299,7 @@ struct TimerRunView: View {
         }
         .navigationBarHidden(true)
         .onAppear {
-            prepareWarningSound() // First prepare the sound to get its duration
+            prepareWarningSound()
             initializeTimer()
             requestNotificationPermission()
             setupAudioSession()
@@ -310,68 +313,30 @@ struct TimerRunView: View {
         }
     }
     
-    // MARK: - Audio Functions
-    
     private func setupAudioSession() {
-        do {
-            // Configure audio session for background playback
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-            print("Audio session configured for background playback")
-        } catch {
-            print("Failed to set up audio session: \(error.localizedDescription)")
-        }
+        AudioManager.shared.setupAudioSession()
     }
     
     private func prepareWarningSound() {
-        guard let soundURL = Bundle.main.url(forResource: "notification", withExtension: "mp3") else {
-            print("Warning sound file not found")
-            // Set a default duration if sound file not found
-            warningSoundDuration = 5
-            return
-        }
-        
-        do {
-            audioPlayer = try AVAudioPlayer(contentsOf: soundURL)
-            
-            // Calculate the duration of the sound file in seconds
-            let duration = audioPlayer?.duration ?? 0
-            warningSoundDuration = Int(ceil(duration))
-            
-            print("Warning sound duration: \(warningSoundDuration) seconds")
-            
-            audioPlayer?.prepareToPlay()
-            audioPlayer?.numberOfLoops = 0 // Play once
-            
-            // Add completion handler
-            audioPlayer?.delegate = AudioPlayerDelegate.shared
-        } catch {
-            print("Failed to prepare audio player: \(error.localizedDescription)")
-            // Set a default duration if there's an error
-            warningSoundDuration = 5
-        }
+        warningSoundDuration = AudioManager.shared.prepareSound(named: "notification", withExtension: "mp3")
+        print("Warning sound duration: \(warningSoundDuration) seconds")
     }
     
     private func playWarningSound() {
-        // Reset warning flag when playing
         warningTriggered = true
         
-        // Ensure audio session is active
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            print("Failed to activate audio session: \(error.localizedDescription)")
+        // Play the sound using AudioManager
+        let success = AudioManager.shared.playSound()
+        
+        if success {
+            print("Warning sound played for set \(currentSet)")
+        } else {
+            print("Failed to play warning sound for set \(currentSet)")
         }
-        
-        // Play the sound
-        audioPlayer?.currentTime = 0
-        audioPlayer?.play()
-        
-        print("Warning sound played for set \(currentSet)")
     }
     
     private func stopWarningSound() {
-        audioPlayer?.stop()
+        AudioManager.shared.stopSound()
         warningTriggered = false
     }
     
@@ -396,7 +361,7 @@ struct TimerRunView: View {
         currentSet = 1
         isTimerRunning = false
         isTimerCompleted = false
-        currentIntensity = isLowIntensity
+        isCurrentIntensityLow = isLowIntensity
         warningTriggered = false
         backgroundWarningTimes = []
     }
@@ -432,7 +397,7 @@ struct TimerRunView: View {
                 currentSet += 1
                 currentMinutes = minutes
                 currentSeconds = seconds
-                currentIntensity.toggle()
+                isCurrentIntensityLow.toggle()
                 warningTriggered = false // Reset warning flag for next set
             } else {
                 completeTimer()
@@ -657,7 +622,7 @@ struct TimerRunView: View {
         var currentSetNumber = currentSet
         var currentMin = currentMinutes
         var currentSec = currentSeconds
-        var currentIntens = currentIntensity
+        var currentIntens = isCurrentIntensityLow
         
         while remainingTimeToProcess > 0 && currentSetNumber <= sets {
             let currentIntervalRemaining = currentMin * 60 + currentSec
@@ -692,7 +657,7 @@ struct TimerRunView: View {
         currentSet = currentSetNumber
         currentMinutes = max(0, currentMin) // Ensure non-negative
         currentSeconds = max(0, currentSec) // Ensure non-negative
-        currentIntensity = currentIntens
+        isCurrentIntensityLow = currentIntens
         warningTriggered = false // Reset warning flag after background time
             
         // If we've completed all sets
@@ -759,21 +724,6 @@ struct TimerRunView: View {
         
     private func cancelPendingNotifications() {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-    }
-}
-
-// MARK: - Audio Player Delegate
-class AudioPlayerDelegate: NSObject, AVAudioPlayerDelegate {
-    static let shared = AudioPlayerDelegate()
-    
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        print("Audio player finished playing")
-    }
-    
-    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        if let error = error {
-            print("Audio player decode error: \(error.localizedDescription)")
-        }
     }
 }
 
