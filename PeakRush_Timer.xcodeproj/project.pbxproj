@@ -11,7 +11,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		AA3A4A3E2E000133009EA24F /* PeakRush_Timer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PeakRush_Timer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA3A4A3E2E000133009EA24F /* PeakRush_Timer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = PeakRush_Timer.app; path = "/Users/rakeshbeesetty/iOS/PeakRush_Timer/build/Debug-iphoneos/PeakRush_Timer.app"; sourceTree = "<absolute>"; };
 		AA3A4A622E01CCB1009EA24F /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -39,16 +39,7 @@
 			children = (
 				AA3A4A622E01CCB1009EA24F /* LaunchScreen.storyboard */,
 				AA3A4A402E000133009EA24F /* PeakRush_Timer */,
-				AA3A4A3F2E000133009EA24F /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		AA3A4A3F2E000133009EA24F /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				AA3A4A3E2E000133009EA24F /* PeakRush_Timer.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -101,7 +92,7 @@
 			mainGroup = AA3A4A352E000133009EA24F;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = AA3A4A3F2E000133009EA24F /* Products */;
+			productRefGroup = AA3A4A352E000133009EA24F;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
