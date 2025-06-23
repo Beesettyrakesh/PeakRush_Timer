@@ -10,6 +10,18 @@ struct TimerConfigView: View {
         return sets > 0 && (minutes > 0 || seconds > 0)
     }
     
+    private var totalWorkoutDuration: Int {
+        return (minutes * 60 + seconds) * 2 * sets
+    }
+
+    private var totalMinutes: Int {
+        return totalWorkoutDuration / 60
+    }
+
+    private var totalSeconds: Int {
+        return totalWorkoutDuration % 60
+    }
+    
     var body: some View {
         ZStack {
             LinearGradient(
@@ -32,62 +44,68 @@ struct TimerConfigView: View {
                 }
                 .padding(.top, 10)
                 
-                HStack(spacing: 12) {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "timer")
-                                .font(.title3)
-                                .foregroundStyle(.blue)
-                            
-                            Text("INTERVAL")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .tracking(0.5)
-                        }
-                        
-                        Text("\(String(format: "%02d", minutes)):\(String(format: "%02d", seconds))")
-                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.primary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-                    
-                    VStack(spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "repeat")
-                                .font(.title3)
-                                .foregroundStyle(.green)
-                            
-                            Text("SETS")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .tracking(0.5)
-                        }
-                        
-                        Text("\(sets)")
-                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.primary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-                }
-                .padding(.horizontal, 20)
+//                HStack(spacing: 12) {
+//                    VStack(spacing: 8) {
+//                        HStack(spacing: 6) {
+//                            Image(systemName: "timer")
+//                                .font(.title3)
+//                                .foregroundStyle(.blue)
+//                            
+//                            Text("INTERVAL")
+//                                .font(.headline)
+//                                .foregroundStyle(.secondary)
+//                                .textCase(.uppercase)
+//                                .tracking(0.5)
+//                        }
+//                        
+//                        Text("\(String(format: "%02d", minutes)):\(String(format: "%02d", seconds))")
+//                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+//                            .foregroundStyle(.primary)
+//                    }
+//                    .frame(maxWidth: .infinity)
+//                    .padding(.vertical, 16)
+//                    .background(Color(.systemBackground))
+//                    .clipShape(RoundedRectangle(cornerRadius: 12))
+//                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+//                    
+//                    VStack(spacing: 8) {
+//                        HStack(spacing: 6) {
+//                            Image(systemName: "repeat")
+//                                .font(.title3)
+//                                .foregroundStyle(.green)
+//                            
+//                            Text("SETS")
+//                                .font(.headline)
+//                                .foregroundStyle(.secondary)
+//                                .textCase(.uppercase)
+//                                .tracking(0.5)
+//                        }
+//                        
+//                        Text("\(sets)")
+//                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+//                            .foregroundStyle(.primary)
+//                    }
+//                    .frame(maxWidth: .infinity)
+//                    .padding(.vertical, 16)
+//                    .background(Color(.systemBackground))
+//                    .clipShape(RoundedRectangle(cornerRadius: 12))
+//                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+//                }
+//                .padding(.horizontal, 20)
                 
                 VStack(spacing: 16) {
                     HStack(spacing: 20) {
                         VStack(spacing: 12) {
-                            Text("Duration")
-                                .font(.headline)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.primary)
+                            HStack {
+                                Image(systemName: "timer")
+                                    .font(.title3)
+                                    .foregroundStyle(.blue)
+                                
+                                Text("Interval")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
                             
                             HStack(spacing: 16) {
                                 VStack(spacing: 6) {
@@ -130,10 +148,16 @@ struct TimerConfigView: View {
                         .frame(maxWidth: .infinity)
                         
                         VStack(spacing: 12) {
-                            Text("Sets")
-                                .font(.headline)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.primary)
+                            HStack {
+                                Image(systemName: "repeat")
+                                    .font(.title3)
+                                    .foregroundStyle(.green)
+                                
+                                Text("Sets")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
                             
                             VStack(spacing: 6) {
                                 Picker("Sets", selection: $sets) {
@@ -163,16 +187,11 @@ struct TimerConfigView: View {
                 .padding(.horizontal, 20)
                 
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Start with Low Intensity")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.primary)
-                        
-                        Text("Begin with a gentler pace")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+
+                    Text("Start with Low Intensity")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
                     
                     Spacer()
                     
@@ -187,11 +206,37 @@ struct TimerConfigView: View {
                 
                 Spacer()
                 
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Total Workout Duration")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                        
+                        Text("A Set consists of 1 Low & 1 High Intensity phase")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Text("\(String(format: "%02d", totalMinutes)):\(String(format: "%02d", totalSeconds))")
+                        .font(.system(size: 21, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                }
+                .padding(16)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+                .padding(.horizontal, 20)
+                
                 NavigationLink(destination: TimerRunView(
                     minutes: minutes,
                     seconds: seconds,
                     sets: sets,
-                    isLowIntensity: isLowIntensity
+                    isLowIntensity: isLowIntensity,
+                    totalWorkoutMinutes: totalMinutes,
+                    totalWorkoutSeconds: totalSeconds
                 )) {
                     HStack(spacing: 8) {
                         Text("Let's Go")

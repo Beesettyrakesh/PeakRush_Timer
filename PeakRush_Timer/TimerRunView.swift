@@ -7,6 +7,8 @@ struct TimerRunView: View {
     let seconds: Int
     let sets: Int
     let isLowIntensity: Bool
+    let totalWorkoutMinutes: Int
+    let totalWorkoutSeconds: Int
     
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -18,6 +20,8 @@ struct TimerRunView: View {
     @State private var timer: Timer?
     @State private var isTimerCompleted: Bool = false
     @State private var isCurrentIntensityLow: Bool = true
+    @State private var lowIntensityCompleted: Bool = false
+    @State private var highIntensityCompleted: Bool = false
     
     @State private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     @State private var lastActiveTimestamp: Date = Date()
@@ -81,6 +85,10 @@ struct TimerRunView: View {
         }
     }
     
+    var checkSetCompleted: Bool {
+        return lowIntensityCompleted && highIntensityCompleted
+    }
+    
     var body: some View {
         ZStack {
             LinearGradient(
@@ -116,51 +124,92 @@ struct TimerRunView: View {
                 .padding(.top, 10)
                     
                 HStack(spacing: 12) {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "timer")
-                                .font(.title3)
-                                .foregroundStyle(.blue)
-                                
-                            Text("INTERVAL")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .tracking(0.5)
-                        }
-                            
-                        Text("\(String(format: "%02d", minutes)):\(String(format: "%02d", seconds))")
-                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.primary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-                        
+                    
                     VStack(spacing: 8) {
                         HStack(spacing: 6) {
                             Image(systemName: "repeat")
                                 .font(.title3)
                                 .foregroundStyle(.green)
-                                
+                                .frame(width: 20, height: 20)
+                            
                             Text("SETS")
-                                .font(.headline)
+                                .font(.system(size: 15, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .textCase(.uppercase)
                                 .tracking(0.5)
+                                .tracking(0.5)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
+                        .frame(height: 25)
                             
                         Text("\(sets)")
-                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 20, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.primary)
+                            .frame(height: 24)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(width: 120, height: 80)
                     .padding(.vertical, 16)
                     .background(Color(.systemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+                    
+                    VStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "timer")
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                                .frame(width: 20, height: 20)
+                                
+                            Text("INTERVAL")
+                                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                                .tracking(0.5)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .frame(height: 25)
+                            
+                        Text("\(String(format: "%02d", minutes)):\(String(format: "%02d", seconds))")
+                            .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.primary)
+                            .frame(height: 24)
+                    }
+                    .frame(width: 120, height: 80)
+                    .padding(.vertical, 16)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+                    
+                    VStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "hourglass")
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                                .frame(width: 20, height: 20)
+                                
+                            Text("Total")
+                                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                                .tracking(0.5)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .frame(height: 25)
+                            
+                        Text("\(String(format: "%02d", totalWorkoutMinutes)):\(String(format: "%02d", totalWorkoutSeconds))")
+                            .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.primary)
+                            .frame(height: 24)
+                    }
+                    .frame(width: 120, height: 80)
+                    .padding(.vertical, 16)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+                    
                 }
                 .padding(.horizontal, 20)
                 
@@ -363,6 +412,8 @@ struct TimerRunView: View {
         isTimerCompleted = false
         isCurrentIntensityLow = isLowIntensity
         warningTriggered = false
+        lowIntensityCompleted = false
+        highIntensityCompleted = false
         backgroundWarningTimes = []
     }
     
@@ -383,7 +434,6 @@ struct TimerRunView: View {
     }
     
     private func updateTimer() {
-        // Check if we need to play warning sound
         checkAndPlayWarningSound()
         
         if currentSeconds > 0 {
@@ -392,16 +442,24 @@ struct TimerRunView: View {
             currentMinutes -= 1
             currentSeconds = 59
         } else {
-            if currentSet < sets {
-                _ = currentSet
-                currentSet += 1
-                currentMinutes = minutes
-                currentSeconds = seconds
-                isCurrentIntensityLow.toggle()
-                warningTriggered = false // Reset warning flag for next set
+            if isCurrentIntensityLow {
+                lowIntensityCompleted = true
             } else {
-                completeTimer()
+                highIntensityCompleted = true
             }
+            if lowIntensityCompleted && highIntensityCompleted {
+                if currentSet < sets {
+                    currentSet += 1
+                    lowIntensityCompleted = false
+                    highIntensityCompleted = false
+                } else {
+                    completeTimer()
+                }
+            }
+            currentMinutes = minutes
+            currentSeconds = seconds
+            isCurrentIntensityLow.toggle()
+            warningTriggered = false
         }
     }
     
@@ -494,36 +552,51 @@ struct TimerRunView: View {
         }
     }
     
-    // Schedule all warning sounds for background playback
     private func scheduleBackgroundWarnings() {
         // Clear any existing scheduled warnings
         backgroundWarningTimes = []
         backgroundCheckTimer?.invalidate()
         
-        // Calculate current remaining time
-        let currentRemainingSeconds = currentMinutes * 60 + currentSeconds
         let now = Date()
         
-        // If there's enough time left in the current set to play a warning
+        // Calculate current remaining time
+        let currentRemainingSeconds = currentMinutes * 60 + currentSeconds
+        
+        // If there's enough time left in the current phase to play a warning
         if currentRemainingSeconds > warningSoundDuration {
             let warningTime = now.addingTimeInterval(TimeInterval(currentRemainingSeconds - warningSoundDuration))
             backgroundWarningTimes.append(warningTime)
+            print("Scheduled warning for current phase at \(warningTime)")
         }
         
-        // Calculate warning times for future sets
+        // Track time offset for future warnings
         var timeOffset = TimeInterval(currentRemainingSeconds)
-        for setIndex in currentSet..<sets {
-            // Skip the first set as we already handled it above
-            if setIndex > currentSet {
-                // Each set has a total duration, and we want to play the warning sound
-                // warningSoundDuration seconds before the end
-                let setDuration = TimeInterval(totalSeconds)
-                let warningOffset = setDuration - TimeInterval(warningSoundDuration)
-                
-                let warningTime = now.addingTimeInterval(timeOffset + warningOffset)
+        
+        // Calculate how many more phases we need to go through
+        var remainingPhases = 0
+        
+        // Current set phases
+        if isCurrentIntensityLow {
+            // We're in low phase, so we'll need the high phase too
+            remainingPhases += 1
+        }
+        
+        // Add two phases for each remaining set (low and high)
+        remainingPhases += (sets - currentSet) * 2
+        
+        // Schedule warnings for all future phases
+        var currentPhaseIsLow = isCurrentIntensityLow
+        
+        for _ in 0..<remainingPhases {
+            // Move to next phase
+            currentPhaseIsLow.toggle()
+            timeOffset += TimeInterval(totalSeconds)
+            
+            // Schedule warning for this phase
+            if timeOffset > TimeInterval(warningSoundDuration) {
+                let warningTime = now.addingTimeInterval(timeOffset - TimeInterval(warningSoundDuration))
                 backgroundWarningTimes.append(warningTime)
-                
-                timeOffset += setDuration
+                print("Scheduled warning for future phase at \(warningTime)")
             }
         }
         
@@ -545,8 +618,11 @@ struct TimerRunView: View {
         }
     }
     
-    // Check if it's time to play any scheduled warning sounds
     private func checkBackgroundWarnings() {
+        // Add debug logging here
+        print("Current set: \(currentSet)/\(sets), Phase: \(isCurrentIntensityLow ? "Low" : "High"), Low completed: \(lowIntensityCompleted), High completed: \(highIntensityCompleted)")
+        print("Remaining warnings: \(backgroundWarningTimes.count)")
+        
         guard !backgroundWarningTimes.isEmpty else { return }
         
         let now = Date()
@@ -556,9 +632,16 @@ struct TimerRunView: View {
         for (index, warningTime) in backgroundWarningTimes.enumerated() {
             // If the time has passed or is very close (within 0.5 seconds)
             if now >= warningTime || now.timeIntervalSince(warningTime) > -0.5 {
+                // Ensure audio session is active before playing
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                } catch {
+                    print("Failed to reactivate audio session: \(error)")
+                }
+                
                 // Play the warning sound
                 playWarningSound()
-                print("Playing scheduled warning sound \(index + 1)")
+                print("Playing scheduled warning sound \(index + 1) at \(now)")
                 
                 // Mark this index for removal
                 triggeredIndices.append(index)
@@ -577,21 +660,17 @@ struct TimerRunView: View {
         
         // If all warnings have been played, stop the check timer
         if backgroundWarningTimes.isEmpty {
+            print("All warnings played, stopping background check timer")
             backgroundCheckTimer?.invalidate()
             backgroundCheckTimer = nil
-            
-            // End the background task if we're done with all warnings
-            if currentSet >= sets {
-                endBackgroundTask()
-            }
         }
     }
     
     private func beginBackgroundTask() {
         // End any existing background task
         endBackgroundTask()
-            
-        // Start a new background task
+        
+        // Request background execution time
         backgroundTaskID = UIApplication.shared.beginBackgroundTask { [self] in
             // Time expired - end the task
             print("Background task expired")
@@ -599,6 +678,17 @@ struct TimerRunView: View {
         }
         
         print("Started background task with ID: \(backgroundTaskID.rawValue)")
+        
+        // Ensure audio session is active for background playback
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            print("Audio session activated for background task")
+        } catch {
+            print("Failed to activate audio session for background: \(error.localizedDescription)")
+        }
+        
+        // Set up periodic audio session refresh
+        setupBackgroundAudioRefresh()
     }
     
     private func endBackgroundTask() {
@@ -613,7 +703,7 @@ struct TimerRunView: View {
         let now = Date()
         let elapsedTime = Int(now.timeIntervalSince(lastActiveTimestamp))
         
-        guard elapsedTime > 0 && elapsedTime < 3600 else { // Max 1 hour
+        guard elapsedTime > 0 && elapsedTime < 3600 else {
             lastActiveTimestamp = now
             return
         }
@@ -623,6 +713,8 @@ struct TimerRunView: View {
         var currentMin = currentMinutes
         var currentSec = currentSeconds
         var currentIntens = isCurrentIntensityLow
+        var lowPhaseCompleted = lowIntensityCompleted
+        var highPhaseCompleted = highIntensityCompleted
         
         while remainingTimeToProcess > 0 && currentSetNumber <= sets {
             let currentIntervalRemaining = currentMin * 60 + currentSec
@@ -631,20 +723,29 @@ struct TimerRunView: View {
                 // This interval is completed
                 remainingTimeToProcess -= currentIntervalRemaining
                 
-                // Move to next set
-                if currentSetNumber < sets {
-                    currentSetNumber += 1
-                    currentMin = minutes
-                    currentSec = seconds
-                    currentIntens.toggle() // Alternate intensity
+                if currentIntens {
+                    lowPhaseCompleted = true
                 } else {
-                    // All sets completed
-                    currentSetNumber = sets // This ensures we know it's completed
-                    currentMin = 0
-                    currentSec = 0
-                    remainingTimeToProcess = 0 // Stop processing
-                    break
+                    highPhaseCompleted = true
                 }
+                
+                if lowPhaseCompleted && highPhaseCompleted {
+                    if currentSetNumber < sets {
+                        currentSetNumber += 1
+                        lowPhaseCompleted = false
+                        highPhaseCompleted = false
+                    } else {
+                        currentSetNumber = sets // This ensures we know it's completed
+                        currentMin = 0
+                        currentSec = 0
+                        remainingTimeToProcess = 0 // Stop processing
+                        break
+                    }
+                }
+                currentMin = minutes
+                currentSec = seconds
+                currentIntens.toggle()
+                
             } else {
                 // Partial completion of current interval
                 let newRemainingSeconds = currentIntervalRemaining - remainingTimeToProcess
@@ -655,13 +756,15 @@ struct TimerRunView: View {
         }
         
         currentSet = currentSetNumber
-        currentMinutes = max(0, currentMin) // Ensure non-negative
-        currentSeconds = max(0, currentSec) // Ensure non-negative
+        currentMinutes = max(0, currentMin)
+        currentSeconds = max(0, currentSec)
         isCurrentIntensityLow = currentIntens
+        lowIntensityCompleted = lowPhaseCompleted
+        highIntensityCompleted = highPhaseCompleted
         warningTriggered = false // Reset warning flag after background time
             
         // If we've completed all sets
-        if currentSet > sets {
+        if currentSet > sets  || (currentSet == sets && lowIntensityCompleted && highIntensityCompleted) {
             isTimerCompleted = true
             isTimerRunning = false
             currentMinutes = 0
@@ -695,10 +798,23 @@ struct TimerRunView: View {
     }
     
     private func scheduleCompletionNotification() {
-        // Only schedule the final completion notification
-        let currentIntervalRemaining = currentMinutes * 60 + currentSeconds
-        let remainingSets = sets - currentSet
-        let totalRemainingSeconds = currentIntervalRemaining + (remainingSets * totalSeconds)
+        
+        let currentPhaseTimeRemaining = currentMinutes * 60 + currentSeconds
+        
+        var totalRemainingSeconds = currentPhaseTimeRemaining
+        
+        if isCurrentIntensityLow && !lowIntensityCompleted {
+            totalRemainingSeconds += totalSeconds
+        } else if !isCurrentIntensityLow && !highIntensityCompleted {
+
+        }
+        
+        // Add time for remaining full sets
+        let completeSetsRemaining = sets - currentSet
+        if completeSetsRemaining > 0 {
+            // Each remaining set has two phases (low and high intensity)
+            totalRemainingSeconds += completeSetsRemaining * totalSeconds * 2
+        }
         
         // Schedule final completion notification
         if totalRemainingSeconds > 0 {
@@ -718,7 +834,22 @@ struct TimerRunView: View {
                 trigger: trigger
             )
             
+            print("Scheduling completion notification in \(totalRemainingSeconds) seconds")
             UNUserNotificationCenter.current().add(request)
+        }
+    }
+    
+    private func setupBackgroundAudioRefresh() {
+        // Create a timer that periodically reactivates the audio session
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+            if self.isTimerRunning && !self.isTimerCompleted {
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                    print("Periodically reactivated audio session")
+                } catch {
+                    print("Failed to reactivate audio session: \(error)")
+                }
+            }
         }
     }
         
@@ -728,5 +859,5 @@ struct TimerRunView: View {
 }
 
 #Preview {
-    TimerRunView(minutes: 0, seconds: 10, sets: 2, isLowIntensity: true)
+    TimerRunView(minutes: 0, seconds: 10, sets: 2, isLowIntensity: true, totalWorkoutMinutes: 0, totalWorkoutSeconds: 0)
 }
