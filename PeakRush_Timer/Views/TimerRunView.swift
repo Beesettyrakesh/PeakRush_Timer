@@ -66,7 +66,7 @@ struct TimerRunView: View {
                             .foregroundStyle(.primary)
                             .frame(height: 24)
                     }
-                    .frame(width: 120, height: 80)
+                    .frame(width: 120, height: 70)
                     .padding(.vertical, 16)
                     .background(Color(.systemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -94,7 +94,7 @@ struct TimerRunView: View {
                             .foregroundStyle(.primary)
                             .frame(height: 24)
                     }
-                    .frame(width: 120, height: 80)
+                    .frame(width: 120, height: 70)
                     .padding(.vertical, 16)
                     .background(Color(.systemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -122,7 +122,7 @@ struct TimerRunView: View {
                             .foregroundStyle(.primary)
                             .frame(height: 24)
                     }
-                    .frame(width: 120, height: 80)
+                    .frame(width: 120, height: 70)
                     .padding(.vertical, 16)
                     .background(Color(.systemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
