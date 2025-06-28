@@ -1,0 +1,106 @@
+# PeakRush Timer Project Intelligence
+
+This file captures project-specific patterns, insights, and preferences for the PeakRush Timer application.
+
+## Code Patterns
+
+1. **MVVM Architecture**
+
+   - Models are structs with immutable properties
+   - ViewModels are classes that inherit from ObservableObject
+   - Views are SwiftUI struct components
+   - Use @Published for properties that trigger UI updates
+
+2. **File Organization**
+
+   - Follow the established folder structure (App, Models, ViewModels, Views, Services, Utilities)
+   - Keep business logic in ViewModels, not in Views
+   - Place shared services in the Services directory
+   - Keep common utilities in the Utilities directory
+
+3. **Naming Conventions**
+
+   - PascalCase for types (classes, structs, enums, protocols)
+   - camelCase for properties, variables, and functions
+   - Model classes end with "Model" (e.g., TimerModel)
+   - ViewModel classes end with "ViewModel" (e.g., TimerConfigViewModel)
+   - View structs end with "View" (e.g., TimerRunView)
+
+4. **UI Design Patterns**
+   - Use LinearGradient for backgrounds and buttons
+   - Follow established color scheme (green for low intensity, red for high intensity)
+   - Maintain consistent component styling (corner radius, shadows, etc.)
+   - Structured information display with clear visual hierarchy
+
+## Critical Implementation Paths
+
+1. **Timer Lifecycle**
+
+   - Timer initialization happens in initializeTimer()
+   - Timer control uses standard start/pause/stop/reset pattern
+   - All timer state updates flow through the ViewModel
+
+2. **Background Execution Flow**
+
+   - Monitor ScenePhase changes via .onChange(of: scenePhase)
+   - Use handleScenePhaseChange() to respond to app state transitions
+   - When backgrounded, schedule notifications and adjust for time drift
+   - When foregrounded, recalculate timer state based on elapsed time
+
+3. **Audio System**
+   - AudioManager is a singleton used throughout the app
+   - Prepare sounds before playback to reduce latency
+   - Manage audio sessions properly when backgrounded
+   - Use speech synthesis for specific announcements
+
+## Known Challenges
+
+1. **Background Execution**
+
+   - iOS limits background execution time (~3 minutes)
+   - Solution: Use local notifications for longer durations
+   - Check backgroundTaskID handling to ensure proper resource management
+
+2. **Timer Accuracy**
+
+   - System timers can drift, especially in background
+   - Solution: Adjust timer when returning to foreground
+   - Use Date comparison for elapsed time calculations
+   - CRITICAL: Always synchronize timestamp variables (lastActiveTimestamp and lastStateChangeTime)
+     when app enters background mode to prevent timer jumping when returning to foreground
+
+3. **Audio Conflicts**
+   - Other apps may interrupt or compete for audio focus
+   - Solution: Implement proper audio session handling and restoration
+
+## Project Preferences
+
+1. **Code Style**
+
+   - Organized methods with MARK comments
+   - Clear, descriptive function and variable names
+   - Keep methods focused on single responsibility
+   - Group related functionality within extension blocks
+
+2. **Documentation**
+   - Document complex logic with comments
+   - Use descriptive variable names that self-document purpose
+   - Keep memory bank updated with significant changes
+   - Document any workarounds or iOS-specific handling
+
+## Testing Considerations
+
+1. **Key Test Points**
+
+   - Timer accuracy during long intervals
+   - Background execution behavior
+   - Timer state persistence when backgrounded/foregrounded
+   - Audio playback in various phone states
+   - Notification reliability when backgrounded
+
+2. **Edge Cases**
+   - Zero minute/second configuration
+   - Maximum values for sets and time intervals
+   - App interruptions (calls, other audio apps)
+   - Low battery situations
+   - Notification permission denial
