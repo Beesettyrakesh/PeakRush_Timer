@@ -15,7 +15,8 @@ class TimerRunViewModel: ObservableObject {
     private var backgroundCheckTimer: Timer?
     private var warningSoundDuration: Int = 0
     private var lastStateChangeTime: Date = Date()
-    private var minimumBackgroundTime: TimeInterval = 1.0
+    private var minimumBackgroundTime: TimeInterval = 3.0 // Increased to 3.0 seconds for better handling of brief app switches
+    private var lastTimerFireTime: Date = Date() // Track when the timer last fired
     
     // New properties for set completion warning
     private var setCompletionWarningTriggered = false
@@ -130,21 +131,44 @@ class TimerRunViewModel: ObservableObject {
             return
         }
         
+        let now = Date()
+        print("Starting timer at \(now)")
+        
         timer?.invalidate()
         timer = nil
         backgroundCheckTimer?.invalidate()
         backgroundCheckTimer = nil
             
         timerModel.isTimerRunning = true
-        lastActiveTimestamp = Date()
+        lastActiveTimestamp = now
+        lastTimerFireTime = now
         timerModel.warningTriggered = false
         setCompletionWarningTriggered = false
         backgroundWarningTimes = []
         scheduledWarnings = []
             
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.updateTimer()
+            guard let self = self else { return }
+            let currentTime = Date()
+            let timeSinceLastFire = currentTime.timeIntervalSince(self.lastTimerFireTime)
+            
+            // If more than 1.5 seconds have passed since the last fire, 
+            // adjust for the extra time to prevent jumps
+            if timeSinceLastFire > 1.5 {
+                let extraSeconds = Int(timeSinceLastFire) - 1
+                print("Timer fired after \(timeSinceLastFire) seconds (adjusting for \(extraSeconds) extra seconds)")
+                
+                // Update multiple times if needed to catch up
+                for _ in 0..<extraSeconds {
+                    self.updateTimer()
+                }
+            }
+            
+            self.lastTimerFireTime = currentTime
+            self.updateTimer()
         }
+        
+        print("Timer started/resumed at \(now)")
     }
     
     func pauseTimer() {
@@ -313,44 +337,39 @@ class TimerRunViewModel: ObservableObject {
         
         switch newPhase {
             case .active:
+                print("App became active at \(now)")
                 // App came to foreground
                 if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
-                    // Calculate how long the app was in background
-                    let backgroundDuration = now.timeIntervalSince(lastStateChangeTime)
+                    // Calculate how long the app was in background/inactive
+                    let timeSinceStateChange = now.timeIntervalSince(lastStateChangeTime)
+                    print("Time since state change: \(timeSinceStateChange) seconds")
                     
-                    // Only process background time if the app was in background for a meaningful duration
-                    // This prevents false adjustments during partial swipe gestures
-                    if backgroundDuration >= minimumBackgroundTime {
-                        // Stop background timer if it exists
+                    if timeSinceStateChange < minimumBackgroundTime {
+                        // For very brief app switches, preserve the timer completely
+                        print("Brief app switch (\(timeSinceStateChange)s), preserving timer state")
+                        
+                        // If the timer was somehow invalidated, restart it without adjustment
+                        if timer == nil {
+                            print("Timer was invalidated during brief app switch, restarting without adjustment")
+                            startTimer()
+                        } else {
+                            // Update the lastTimerFireTime to prevent jumps on the next timer fire
+                            lastTimerFireTime = now
+                            print("Existing timer preserved, updated lastTimerFireTime")
+                        }
+                    } else {
+                        // For longer background durations, perform full adjustment
+                        print("Longer duration away (\(timeSinceStateChange)s), performing full adjustment")
                         backgroundCheckTimer?.invalidate()
                         backgroundCheckTimer = nil
                         backgroundWarningTimes = []
                         scheduledWarnings = []
                         
-                        // If audio was playing, let it continue instead of stopping it
-                        let wasAudioPlaying = audioManager.isAnyAudioPlaying()
-                        
                         adjustTimerForBackgroundTime()
                         cancelPendingNotifications()
                         
-                        // If audio was playing, don't restart it
-                        if wasAudioPlaying {
-                            print("Audio was playing during foreground transition - allowing it to continue")
-                            // Don't reset the warning triggered flag if audio is still playing
-                            timerModel.warningTriggered = true
-                        } else {
-                            timerModel.warningTriggered = false
-                            setCompletionWarningTriggered = false
-                        }
-                    }
-
-                    // Restart the timer if it's still supposed to be running
-                    if !timerModel.isTimerCompleted && timerModel.currentSet <= timerModel.sets {
-                    // If the timer was already running and we just had a brief state change,
-                    // don't restart the timer to avoid timer jumps
-                        if backgroundDuration < minimumBackgroundTime && timer != nil {
-                            print("Keeping existing timer running after brief state change")
-                        } else {
+                        // Restart the timer if it's still supposed to be running
+                        if !timerModel.isTimerCompleted && timerModel.currentSet <= timerModel.sets {
                             startTimer()
                         }
                     }
@@ -362,26 +381,33 @@ class TimerRunViewModel: ObservableObject {
                 // End background task if it exists
                 endBackgroundTask()
                 
-        case .background:
-            // Record the time we entered background
-            lastStateChangeTime = now
+            case .background:
+                // Record the time we entered background
+                lastStateChangeTime = now
+                print("App entered background at \(now)")
+                        
+                // App went to background
+                if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
+                    // NEVER invalidate the timer for background state
+                    // This is critical for preventing timer jumps during brief app switches
                     
-            // App went to background
-            if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
-                // Pause the active timer
-                timer?.invalidate()
-                timer = nil
-                
-                beginBackgroundTask()
-                scheduleBackgroundWarnings()
-                
-                // Only schedule completion notification
-                scheduleCompletionNotification()
-            }
+                    beginBackgroundTask()
+                    scheduleBackgroundWarnings()
                     
+                    // Only schedule completion notification
+                    scheduleCompletionNotification()
+                }
+                        
             case .inactive:
-                // App is transitioning between states - do nothing
-                break
+                // App is transitioning between states
+                print("App became inactive at \(now)")
+                
+                // Record the time we became inactive
+                // This is important because brief app switches often go through inactive state
+                lastStateChangeTime = now
+                
+                // Do not invalidate the timer here either
+                
             @unknown default:
                 break
         }
@@ -655,6 +681,7 @@ class TimerRunViewModel: ObservableObject {
             }
         }
         
+        // Update the model with calculated values
         timerModel.currentSet = currentSetNumber
         timerModel.currentMinutes = max(0, currentMin)
         timerModel.currentSeconds = max(0, currentSec)
@@ -673,6 +700,7 @@ class TimerRunViewModel: ObservableObject {
         }
         
         lastActiveTimestamp = now
+        print("Timer adjusted to: \(timerModel.currentMinutes):\(timerModel.currentSeconds), Set \(timerModel.currentSet)/\(timerModel.sets)")
     }
     
     private func setupBackgroundAudioRefresh() {
