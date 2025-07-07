@@ -5,6 +5,16 @@ import SwiftUI
 import AVFoundation
 import UserNotifications
 
+/// TimerRunViewModel manages the execution of interval training timers,
+/// including background operation with audio cues.
+///
+/// Background Audio System:
+/// - When the app goes to background, warnings are scheduled based on the current timer state
+/// - A background timer checks periodically if any warnings should be played
+/// - The timer state continues to advance internally while in background
+/// - When warnings are played, they use the current timer state to ensure accuracy
+/// - This approach ensures users hear the correct audio cues even if the app remains
+///   in the background for extended periods spanning multiple sets
 class TimerRunViewModel: ObservableObject {
     @Published var timerModel: TimerModel
     
@@ -15,14 +25,22 @@ class TimerRunViewModel: ObservableObject {
     private var backgroundCheckTimer: Timer?
     private var warningSoundDuration: Int = 0
     private var lastStateChangeTime: Date = Date()
-    private var minimumBackgroundTime: TimeInterval = 3.0 // Increased to 3.0 seconds for better handling of brief app switches
-    private var lastTimerFireTime: Date = Date() // Track when the timer last fired
+    private var minimumBackgroundTime: TimeInterval = 3.0
+    private var lastTimerFireTime: Date = Date()
     
-    // New properties for set completion warning
     private var setCompletionWarningTriggered = false
-    private var setCompletionWarningSeconds = 5 // Play warning 5 seconds before set completion
+    private var setCompletionWarningSeconds = 4
+    
+    private var playedSetCompletionWarnings: Set<Int> = []
+    private var playedSetCompletionWarningsWithTime: [Int: Date] = [:]
+    private var isInBackgroundMode = false
+    private var hasScheduledCompletionNotification = false
+    private var lastCompletionNotificationTime: Date? = nil
+    private var scheduledNotificationCompletionTime: Date? = nil
     
     // Enum to distinguish between warning types for background mode
+    // Note: For setCompletion warnings, the stored setNumber is used only for scheduling.
+    // The actual set number announced at playback time is determined by the current timer state.
     private enum WarningType {
         case phaseTransition
         case setCompletion(setNumber: Int)
@@ -121,6 +139,12 @@ class TimerRunViewModel: ObservableObject {
         setCompletionWarningTriggered = false
         backgroundWarningTimes = []
         scheduledWarnings = []
+        playedSetCompletionWarnings = []
+        playedSetCompletionWarningsWithTime = [:]
+        isInBackgroundMode = false
+        hasScheduledCompletionNotification = false
+        lastCompletionNotificationTime = nil
+        scheduledNotificationCompletionTime = nil
     }
     
     func startTimer() {
@@ -146,6 +170,9 @@ class TimerRunViewModel: ObservableObject {
         setCompletionWarningTriggered = false
         backgroundWarningTimes = []
         scheduledWarnings = []
+        
+        // Don't reset played warnings when just starting/resuming the timer
+        // This ensures we don't play the same warnings again
             
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
@@ -242,10 +269,30 @@ class TimerRunViewModel: ObservableObject {
         timerModel.isTimerCompleted = true
         
         if UIApplication.shared.applicationState == .background {
+            // Only send notification if we haven't sent one recently (within 10 seconds)
+            let now = Date()
+            
+            // Check if we have a scheduled completion time and we're not yet at that time
+            if let scheduledTime = scheduledNotificationCompletionTime, 
+               now < scheduledTime {
+                print("Skipping immediate completion notification - scheduled notification will fire at \(scheduledTime)")
+                return
+            }
+            
+            // Check if we've sent a notification recently
+            if let lastTime = lastCompletionNotificationTime, 
+               now.timeIntervalSince(lastTime) < 10.0 {
+                print("Skipping duplicate completion notification - last one sent \(now.timeIntervalSince(lastTime)) seconds ago")
+                return
+            }
+            
+            // Send the notification
             notificationService.sendLocalNotification(
                 title: "Workout Complete!",
                 body: "You've completed all \(timerModel.sets) sets. Great job!"
             )
+            lastCompletionNotificationTime = now
+            print("Sent workout completion notification at \(now)")
         } else {
             let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
             impactFeedback.impactOccurred()
@@ -320,13 +367,35 @@ class TimerRunViewModel: ObservableObject {
         if isLastPhaseOfSet && remainingSeconds == setCompletionWarningSeconds {
             setCompletionWarningTriggered = true
             
-            // Speak the set completion warning
-            let setCompletionText = "Set \(timerModel.currentSet) completing in 3, 2, 1, 0"
+            let now = Date()
+            let currentSet = timerModel.currentSet
             
-            // Play the speech
-            let _ = audioManager.speakText(setCompletionText, rate: 0.5)
+            // Check if we've played this warning recently (within 10 seconds)
+            if let lastPlayedTime = playedSetCompletionWarningsWithTime[currentSet],
+               now.timeIntervalSince(lastPlayedTime) < 10.0 {
+                print("Skipping duplicate set completion announcement for set \(currentSet) - played \(now.timeIntervalSince(lastPlayedTime)) seconds ago")
+                return
+            }
             
-            print("Playing set completion announcement for set \(timerModel.currentSet)")
+            // Special handling for the final set - always play the warning
+            let isFinalSet = currentSet == timerModel.sets
+            
+            // Check if we've already played this set's completion warning
+            if isFinalSet || !playedSetCompletionWarnings.contains(currentSet) {
+                // Add to played warnings set
+                playedSetCompletionWarnings.insert(currentSet)
+                playedSetCompletionWarningsWithTime[currentSet] = now
+                
+                // Speak the set completion warning
+                let setCompletionText = "Set \(currentSet) completing in 3, 2, 1, 0"
+                
+                // Play the speech
+                let _ = audioManager.speakText(setCompletionText, rate: 0.5)
+                
+                print("Playing set completion announcement for set \(currentSet) at \(now)")
+            } else {
+                print("Skipping duplicate set completion announcement for set \(currentSet)")
+            }
         }
     }
     
@@ -339,6 +408,10 @@ class TimerRunViewModel: ObservableObject {
             case .active:
                 print("App became active at \(now)")
                 // App came to foreground
+                isInBackgroundMode = false
+                hasScheduledCompletionNotification = false
+                scheduledNotificationCompletionTime = nil
+                
                 if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
                     // Calculate how long the app was in background/inactive
                     let timeSinceStateChange = now.timeIntervalSince(lastStateChangeTime)
@@ -360,10 +433,9 @@ class TimerRunViewModel: ObservableObject {
                     } else {
                         // For longer background durations, perform full adjustment
                         print("Longer duration away (\(timeSinceStateChange)s), performing full adjustment")
-                        backgroundCheckTimer?.invalidate()
-                        backgroundCheckTimer = nil
-                        backgroundWarningTimes = []
-                        scheduledWarnings = []
+                        
+                        // Properly clean up background resources
+                        cleanupBackgroundResources()
                         
                         adjustTimerForBackgroundTime()
                         cancelPendingNotifications()
@@ -382,31 +454,25 @@ class TimerRunViewModel: ObservableObject {
                 endBackgroundTask()
                 
             case .background:
-                // Record the time we entered background
                 lastStateChangeTime = now
                 print("App entered background at \(now)")
+                isInBackgroundMode = true
                         
-                // App went to background
                 if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
-                    // NEVER invalidate the timer for background state
-                    // This is critical for preventing timer jumps during brief app switches
-                    
                     beginBackgroundTask()
+                    
+                    // Schedule warnings based on current timer state.
+                    // Note: The timer continues to advance internally while in background,
+                    // so warnings will be played based on the actual timer state at the time
+                    // they're triggered, not necessarily what was scheduled here.
                     scheduleBackgroundWarnings()
                     
-                    // Only schedule completion notification
                     scheduleCompletionNotification()
                 }
                         
             case .inactive:
-                // App is transitioning between states
                 print("App became inactive at \(now)")
-                
-                // Record the time we became inactive
-                // This is important because brief app switches often go through inactive state
                 lastStateChangeTime = now
-                
-                // Do not invalidate the timer here either
                 
             @unknown default:
                 break
@@ -414,19 +480,15 @@ class TimerRunViewModel: ObservableObject {
     }
     
     private func beginBackgroundTask() {
-        // End any existing background task
         endBackgroundTask()
         
-        // Request background execution time
         backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
-            // Time expired - end the task
             print("Background task expired")
             self?.endBackgroundTask()
         }
         
         print("Started background task with ID: \(backgroundTaskID.rawValue)")
         
-        // Ensure audio session is active for background playback
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
             print("Audio session activated for background task")
@@ -434,7 +496,6 @@ class TimerRunViewModel: ObservableObject {
             print("Failed to activate audio session for background: \(error.localizedDescription)")
         }
         
-        // Set up periodic audio session refresh
         setupBackgroundAudioRefresh()
     }
     
@@ -446,49 +507,57 @@ class TimerRunViewModel: ObservableObject {
         }
     }
     
+    private func cleanupBackgroundResources() {
+        backgroundCheckTimer?.invalidate()
+        backgroundCheckTimer = nil
+        backgroundWarningTimes = []
+        scheduledWarnings = []
+        print("Background resources cleaned up")
+    }
+    
+    /// Schedules audio warnings to be played while the app is in the background.
+    ///
+    /// This method calculates when warnings should be played based on the current timer state
+    /// and future phases. It schedules two types of warnings:
+    /// - Phase transition warnings: Played before transitioning between low and high intensity
+    /// - Set completion warnings: Played before completing a set
+    ///
+    /// Important: While this method schedules warnings with specific set numbers, the actual
+    /// set number announced at playback time is determined by the current timer state at that moment.
+    /// This ensures that if the timer advances while in background, the correct set number is announced.
     private func scheduleBackgroundWarnings() {
-        // Clear any existing scheduled warnings
         backgroundWarningTimes = []
         scheduledWarnings = []
         backgroundCheckTimer?.invalidate()
         
         let now = Date()
         
-        // Calculate current remaining time
         let currentRemainingSeconds = timerModel.currentMinutes * 60 + timerModel.currentSeconds
         
-        // Determine if current phase is the last in the set
         let isCurrentPhaseLastInSet = (timerModel.isCurrentIntensityLow && timerModel.highIntensityCompleted) ||
                                      (!timerModel.isCurrentIntensityLow && timerModel.lowIntensityCompleted)
         
-        // If there's enough time left in the current phase to play a warning
         if currentRemainingSeconds > warningSoundDuration {
-            // Only schedule phase transition warning if this is not the last phase of the set
             if !isCurrentPhaseLastInSet {
                 let warningTime = now.addingTimeInterval(TimeInterval(currentRemainingSeconds - warningSoundDuration))
                 scheduledWarnings.append(ScheduledWarning(time: warningTime, type: .phaseTransition))
-                print("Scheduled phase transition warning at \(warningTime)")
+                print("Scheduled phase transition for current set-\(timerModel.currentSet), warning at \(warningTime)")
             }
         }
         
-        // Schedule set completion warning if this is the last phase of the set
         if isCurrentPhaseLastInSet && currentRemainingSeconds > setCompletionWarningSeconds {
             let setCompletionWarningTime = now.addingTimeInterval(TimeInterval(currentRemainingSeconds - setCompletionWarningSeconds))
             scheduledWarnings.append(ScheduledWarning(time: setCompletionWarningTime, type: .setCompletion(setNumber: timerModel.currentSet)))
-            print("Scheduled set completion warning at \(setCompletionWarningTime)")
+            print("Scheduled set completion for current set-\(timerModel.currentSet), warning at \(setCompletionWarningTime)")
         }
         
-        // Track time offset for future warnings
         var timeOffset = TimeInterval(currentRemainingSeconds)
         
-        // Calculate how many more phases we need to go through
         var phaseSequence: [(isLow: Bool, isLastInSet: Bool, setNumber: Int)] = []
         
-        // Current phase
         let currentPhaseIsLow = timerModel.isCurrentIntensityLow
         let currentSetNumber = timerModel.currentSet
         
-        // If current phase is not the last in set, we need to add the next phase in this set
         if !isCurrentPhaseLastInSet {
             phaseSequence.append((isLow: !currentPhaseIsLow, isLastInSet: true, setNumber: currentSetNumber))
         }
@@ -496,7 +565,6 @@ class TimerRunViewModel: ObservableObject {
         // Add two phases for each remaining set (low and high)
         for setIndex in currentSetNumber..<timerModel.sets {
             if setIndex > currentSetNumber || (setIndex == currentSetNumber && isCurrentPhaseLastInSet) {
-                // For future sets, add both low and high phases
                 let nextSetNumber = setIndex + 1
                 if nextSetNumber <= timerModel.sets {
                     phaseSequence.append((isLow: timerModel.isLowIntensity, isLastInSet: false, setNumber: nextSetNumber))
@@ -504,31 +572,26 @@ class TimerRunViewModel: ObservableObject {
                 }
             }
         }
-        
+                
         // Schedule warnings for all future phases
-        for (index, phase) in phaseSequence.enumerated() {
-            // Move to next phase
+        for (_, phase) in phaseSequence.enumerated() {
             timeOffset += TimeInterval(timerModel.totalSeconds)
             
-            // Schedule regular interval warning for this phase if it's not the last in the set
             if !phase.isLastInSet && timeOffset > TimeInterval(warningSoundDuration) {
                 let warningTime = now.addingTimeInterval(timeOffset - TimeInterval(warningSoundDuration))
                 scheduledWarnings.append(ScheduledWarning(time: warningTime, type: .phaseTransition))
-                print("Scheduled phase transition warning for future phase \(index + 1) at \(warningTime)")
+                print("Scheduled phase transition warning for set-\(phase.setNumber) at \(warningTime)")
             }
             
-            // Schedule set completion warning if this is the last phase of a set
             if phase.isLastInSet && timeOffset > TimeInterval(setCompletionWarningSeconds) {
                 let setCompletionWarningTime = now.addingTimeInterval(timeOffset - TimeInterval(setCompletionWarningSeconds))
                 scheduledWarnings.append(ScheduledWarning(time: setCompletionWarningTime, type: .setCompletion(setNumber: phase.setNumber)))
-                print("Scheduled set completion warning for future phase \(index + 1) at \(setCompletionWarningTime)")
+                print("Scheduled set completion warning for set-\(phase.setNumber) at \(setCompletionWarningTime)")
             }
         }
         
-        // Convert to simple backgroundWarningTimes for compatibility with existing code
         backgroundWarningTimes = scheduledWarnings.map { $0.time }
         
-        // Log scheduled warning times
         print("Scheduled \(scheduledWarnings.count) warnings:")
         for (index, warning) in scheduledWarnings.enumerated() {
             let timeInterval = warning.time.timeIntervalSince(now)
@@ -542,7 +605,6 @@ class TimerRunViewModel: ObservableObject {
             print("Warning \(index + 1): \(typeString) in \(timeInterval) seconds")
         }
         
-        // Start a timer that checks frequently if it's time to play a warning sound
         backgroundCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.checkBackgroundWarnings()
         }
@@ -553,14 +615,20 @@ class TimerRunViewModel: ObservableObject {
         }
     }
     
+    /// Checks if any scheduled warnings should be played and triggers them if appropriate.
+    ///
+    /// This method is called periodically by the backgroundCheckTimer to check if any
+    /// scheduled warnings should be played. When a warning time is reached:
+    /// - For phase transitions: A sound is played
+    /// - For set completions: A speech announcement is made using the CURRENT set number
+    ///   from the timer model, not necessarily the set number that was stored when the
+    ///   warning was scheduled. This ensures the announcement matches the actual timer state.
     private func checkBackgroundWarnings() {
-        // Add debug logging here
         print("Current set: \(timerModel.currentSet)/\(timerModel.sets), Phase: \(timerModel.isCurrentIntensityLow ? "Low" : "High"), Low completed: \(timerModel.lowIntensityCompleted), High completed: \(timerModel.highIntensityCompleted)")
         print("Remaining warnings: \(scheduledWarnings.count)")
         
         guard !scheduledWarnings.isEmpty else { return }
         
-        // If audio is already playing, don't start another warning
         if audioManager.isAnyAudioPlaying() {
             return
         }
@@ -568,35 +636,56 @@ class TimerRunViewModel: ObservableObject {
         let now = Date()
         var triggeredIndices: [Int] = []
         
-        // Check each scheduled warning time
         for (index, warning) in scheduledWarnings.enumerated() {
-            // If the time has passed or is very close (within 0.5 seconds)
             if now >= warning.time || now.timeIntervalSince(warning.time) > -0.5 {
-                // Ensure audio session is active before playing
                 do {
                     try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
                 } catch {
                     print("Failed to reactivate audio session: \(error)")
                 }
                 
-                // Play the appropriate warning based on type
                 switch warning.type {
                 case .phaseTransition:
-                    // Play the warning sound for phase transitions
                     playWarningSound()
                     print("Playing phase transition warning sound at \(now)")
                     
                 case .setCompletion(let setNumber):
-                    // Play the speech announcement for set completion
-                    let setCompletionText = "Set \(setNumber) completing in 3, 2, 1, 0"
-                    let _ = audioManager.speakText(setCompletionText, rate: 0.5)
-                    print("Playing set completion announcement for set \(setNumber) at \(now)")
+                    // Use the current set number from the model to ensure accuracy.
+                    // Note: This may differ from the 'setNumber' parameter if the timer
+                    // has advanced while in the background. We prioritize announcing
+                    // the current timer state rather than what was scheduled.
+                    let actualSetNumber = timerModel.currentSet
+                    
+                    // Log if there's a mismatch between scheduled and actual set numbers
+                    if setNumber != actualSetNumber {
+                        print("Note: Set completion was scheduled for set \(setNumber) but playing for current set \(actualSetNumber)")
+                    }
+                    
+                    // Check if we've played this warning recently (within 10 seconds)
+                    if let lastPlayedTime = playedSetCompletionWarningsWithTime[actualSetNumber],
+                       now.timeIntervalSince(lastPlayedTime) < 10.0 {
+                        print("Skipping duplicate set completion announcement for set \(actualSetNumber) - played \(now.timeIntervalSince(lastPlayedTime)) seconds ago")
+                        break
+                    }
+                    
+                    let isFinalSet = actualSetNumber == timerModel.sets
+                    
+                    // Only play if we haven't already played this set's completion warning or it's the final set
+                    if isFinalSet || !playedSetCompletionWarnings.contains(actualSetNumber) {
+                        playedSetCompletionWarnings.insert(actualSetNumber)
+                        playedSetCompletionWarningsWithTime[actualSetNumber] = now
+                        
+                        let setCompletionText = "Set \(actualSetNumber) completing in 3, 2, 1, 0"
+                        let _ = audioManager.speakText(setCompletionText, rate: 0.0)
+                        print("Playing set completion announcement for set \(actualSetNumber) at \(now) (scheduled as set \(setNumber))")
+                    } else {
+                        print("Skipping duplicate set completion announcement for set \(actualSetNumber) at \(now)")
+                    }
                 }
                 
                 // Mark this index for removal
                 triggeredIndices.append(index)
                 
-                // Only play one sound at a time to avoid overlap
                 break
             }
         }
@@ -722,34 +811,103 @@ class TimerRunViewModel: ObservableObject {
     // MARK: - Notification Methods
     
     private func scheduleCompletionNotification() {
-        let currentPhaseTimeRemaining = timerModel.currentMinutes * 60 + timerModel.currentSeconds
-        
-        var totalRemainingSeconds = currentPhaseTimeRemaining
-        
-        if timerModel.isCurrentIntensityLow && !timerModel.lowIntensityCompleted {
-            totalRemainingSeconds += timerModel.totalSeconds
+        // If we've already scheduled a completion notification, don't schedule another one
+        if hasScheduledCompletionNotification {
+            print("Completion notification already scheduled, skipping")
+            return
         }
         
-        // Add time for remaining full sets
-        let completeSetsRemaining = timerModel.sets - timerModel.currentSet
-        if completeSetsRemaining > 0 {
-            // Each remaining set has two phases (low and high intensity)
-            totalRemainingSeconds += completeSetsRemaining * timerModel.totalSeconds * 2
-        }
+        // Cancel any existing notifications first to prevent duplicates
+        cancelPendingNotifications()
+        
+        // Calculate remaining time more accurately
+        var totalRemainingSeconds = calculateTotalRemainingTime()
+        
+        // For very short intervals, use a larger buffer
+        let isShortInterval = timerModel.totalSeconds <= 15
+        
+        // Add a buffer to prevent premature notifications
+        // Use a larger buffer (8 seconds) for short intervals, otherwise use 5 seconds
+        let bufferSeconds = isShortInterval ? 8 : 5
+        totalRemainingSeconds += bufferSeconds
         
         // Schedule final completion notification
         if totalRemainingSeconds > 0 {
+            // Calculate and store the scheduled completion time
+            let scheduledTime = Date().addingTimeInterval(TimeInterval(totalRemainingSeconds))
+            scheduledNotificationCompletionTime = scheduledTime
+            
             notificationService.scheduleNotification(
                 title: "Workout Complete!",
                 body: "You've completed all \(timerModel.sets) sets. Great job!",
                 timeInterval: TimeInterval(totalRemainingSeconds),
                 identifier: "workoutComplete"
             )
-            print("Scheduling completion notification in \(totalRemainingSeconds) seconds")
+            hasScheduledCompletionNotification = true
+            print("Scheduling completion notification in \(totalRemainingSeconds) seconds (at \(scheduledTime))")
         }
+    }
+    
+    // More accurate calculation of total remaining time
+    private func calculateTotalRemainingTime() -> Int {
+        // Current phase remaining time
+        let currentPhaseTimeRemaining = timerModel.currentMinutes * 60 + timerModel.currentSeconds
+        
+        // Start with current phase
+        var totalRemainingSeconds = currentPhaseTimeRemaining
+        
+        // Track phases we need to account for
+        var phasesRemaining = 0
+        
+        // Current set status
+        let currentSet = timerModel.currentSet
+        let isLowPhase = timerModel.isCurrentIntensityLow
+        let lowCompleted = timerModel.lowIntensityCompleted
+        let highCompleted = timerModel.highIntensityCompleted
+        
+        // Calculate remaining phases in current set
+        if isLowPhase && !lowCompleted && !highCompleted {
+            // We're in low phase, high phase still remains
+            phasesRemaining += 1
+        } else if !isLowPhase && lowCompleted && !highCompleted {
+            // We're in high phase, no more phases in this set
+            phasesRemaining += 0
+        } else if isLowPhase && lowCompleted && !highCompleted {
+            // We're in low phase (second time), no more phases in this set
+            phasesRemaining += 0
+        } else if !isLowPhase && !lowCompleted && !highCompleted {
+            // We're in high phase (started with high), low phase still remains
+            phasesRemaining += 1
+        }
+        
+        // Add time for remaining phases in current set
+        totalRemainingSeconds += phasesRemaining * timerModel.totalSeconds
+        
+        // Add time for remaining full sets
+        let completeSetsRemaining = timerModel.sets - currentSet
+        if completeSetsRemaining > 0 {
+            // Each remaining set has two phases (low and high intensity)
+            totalRemainingSeconds += completeSetsRemaining * timerModel.totalSeconds * 2
+        }
+        
+        // For very short intervals (10 seconds or less), add a small additional buffer
+        // This helps prevent premature notifications
+        if timerModel.totalSeconds <= 10 {
+            // Add 1 second per remaining phase/set to account for timing variations
+            let totalPhasesRemaining = phasesRemaining + (completeSetsRemaining * 2)
+            totalRemainingSeconds += totalPhasesRemaining
+        }
+        
+        print("Calculated total remaining time: \(totalRemainingSeconds) seconds")
+        print("Current set: \(currentSet)/\(timerModel.sets), Phase: \(isLowPhase ? "Low" : "High"), Low completed: \(lowCompleted), High completed: \(highCompleted)")
+        
+        return totalRemainingSeconds
     }
     
     private func cancelPendingNotifications() {
         notificationService.cancelAllNotifications()
+        hasScheduledCompletionNotification = false
+        scheduledNotificationCompletionTime = nil
+        print("Cancelled all pending notifications")
     }
 }

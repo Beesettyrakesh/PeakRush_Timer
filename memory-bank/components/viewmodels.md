@@ -102,13 +102,29 @@ private var backgroundWarningTimes: [Date] = []
 private var backgroundCheckTimer: Timer?
 private var warningSoundDuration: Int = 0
 private var lastStateChangeTime: Date = Date()
-private var minimumBackgroundTime: TimeInterval = 1.0
+private var minimumBackgroundTime: TimeInterval = 3.0
+private var lastTimerFireTime: Date = Date()
+
+// Set completion warning properties
 private var setCompletionWarningTriggered = false
 private var setCompletionWarningSeconds = 5
+
+// Warning tracking properties
+private var playedSetCompletionWarnings: Set<Int> = []
+private var playedSetCompletionWarningsWithTime: [Int: Date] = [:]
+
+// Background state tracking
+private var isInBackgroundMode = false
+private var hasScheduledCompletionNotification = false
+private var lastCompletionNotificationTime: Date? = nil
+private var scheduledCompletionTime: Date? = nil
+
 private var scheduledWarnings: [ScheduledWarning] = []
 private let notificationService = NotificationService()
 private let audioManager = AudioManager.shared
 ```
+
+These properties manage the timer state, background processing, audio cues, and service dependencies. The enhanced properties include timestamp-based warning tracking, notification scheduling state, and background mode tracking to prevent duplicate audio cues and ensure reliable operation.
 
 These properties manage the timer state, background processing, audio cues, and service dependencies.
 
@@ -187,22 +203,27 @@ The ViewModel implements a sophisticated background processing strategy:
 
 1. When the app enters the background:
 
-   - Pause the active timer
+   - Maintain the timer state (without invalidating it)
    - Begin a background task
    - Schedule audio warnings for future phase transitions
-   - Schedule a completion notification
+   - Schedule a completion notification with dynamic buffer calculation
+   - Track the scheduled notification time
 
 2. When the app returns to the foreground:
 
    - Calculate elapsed background time
+   - Clean up background resources
    - Adjust timer state based on elapsed time
    - Cancel pending notifications
+   - Reset notification state
    - Restart the timer
 
 3. During background execution:
    - Periodically check if it's time to play warning sounds
    - Maintain audio session activation
-   - Track which warnings have been played
+   - Track which warnings have been played using both set-based and timestamp-based mechanisms
+   - Prevent duplicate warnings using time-based throttling
+   - Handle special cases for final set warnings
 
 ### Audio Strategy
 
@@ -212,6 +233,32 @@ The ViewModel coordinates with `AudioManager` to provide audio feedback:
 2. **Set Completion Announcements**: Use speech synthesis for countdown
 3. **Background Audio**: Schedule and play sounds even when app is backgrounded
 4. **Interruption Handling**: Manage audio session interruptions
+5. **Duplicate Prevention**: Use multi-layer protection against duplicate audio cues:
+   - Set-based tracking of played warnings
+   - Timestamp-based tracking with 10-second throttling window
+   - Special handling for final set warnings
+   - Audio playback state checking
+
+### Notification Strategy
+
+The ViewModel implements a robust notification strategy:
+
+1. **Dynamic Buffer Calculation**: Use larger buffers for shorter intervals
+   - 8 seconds for intervals ≤ 15 seconds
+   - 5 seconds for longer intervals
+   - Additional proportional buffer for very short intervals (≤ 10 seconds)
+
+2. **Duplicate Prevention**: Multiple layers of protection:
+   - State tracking with `hasScheduledCompletionNotification`
+   - Time-based throttling (10-second window)
+   - Scheduled time comparison
+   - Proper cleanup during background-foreground transitions
+
+3. **Accurate Timing**: Enhanced calculation of remaining time accounting for:
+   - Current phase status
+   - Completed phases
+   - Remaining sets
+   - Interval duration
 
 ## ViewModel Interaction
 

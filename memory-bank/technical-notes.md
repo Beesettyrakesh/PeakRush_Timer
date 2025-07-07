@@ -482,4 +482,79 @@ The app uses SwiftUI's `@UIApplicationDelegateAdaptor` property wrapper to integ
 
 The app leverages SwiftUI's environment values to access system functionality like navigation dismissal and scene phase monitoring.
 
-These technical implementations demonstrate the sophisticated engineering behind the PeakRush Timer app, enabling robust operation across all app states while maintaining clean separation of concerns and testability.
+## 🔊 Background Audio Cue Enhancements
+
+The app implements several sophisticated mechanisms to ensure reliable audio cues when the app is in the background:
+
+### Timestamp-Based Warning Tracking
+
+```swift
+// Track which set completion warnings have been played with timestamps
+private var playedSetCompletionWarningsWithTime: [Int: Date] = [:]
+
+// Check if we've played this warning recently (within 10 seconds)
+if let lastPlayedTime = playedSetCompletionWarningsWithTime[currentSet],
+   now.timeIntervalSince(lastPlayedTime) < 10.0 {
+    print("Skipping duplicate set completion announcement for set \(currentSet) - played \(now.timeIntervalSince(lastPlayedTime)) seconds ago")
+    return
+}
+
+// Add to played warnings set with timestamp
+playedSetCompletionWarnings.insert(currentSet)
+playedSetCompletionWarningsWithTime[currentSet] = now
+```
+
+This mechanism prevents duplicate speech warnings by tracking when each set's completion warning was last played, ensuring that the same warning isn't played twice within a short time period.
+
+### Dynamic Buffer Calculation
+
+```swift
+// For very short intervals, use a larger buffer
+let isShortInterval = timerModel.totalSeconds <= 15
+
+// Add a buffer to prevent premature notifications
+// Use a larger buffer (8 seconds) for short intervals, otherwise use 5 seconds
+let bufferSeconds = isShortInterval ? 8 : 5
+totalRemainingSeconds += bufferSeconds
+
+// For very short intervals (10 seconds or less), add a small additional buffer
+if timerModel.totalSeconds <= 10 {
+    // Add 1 second per remaining phase/set to account for timing variations
+    let totalPhasesRemaining = phasesRemaining + (completeSetsRemaining * 2)
+    totalRemainingSeconds += totalPhasesRemaining
+}
+```
+
+This adaptive buffer calculation ensures that notifications appear at the correct time, with larger buffers for shorter intervals which are more sensitive to timing variations.
+
+### Scheduled Notification Tracking
+
+```swift
+// Track the scheduled completion notification time
+private var scheduledCompletionTime: Date? = nil
+
+// Calculate and store the scheduled completion time
+let scheduledTime = Date().addingTimeInterval(TimeInterval(totalRemainingSeconds))
+scheduledCompletionTime = scheduledTime
+
+// Check if we have a scheduled completion time and we're not yet at that time
+if let scheduledTime = scheduledCompletionTime, 
+   now < scheduledTime {
+    print("Skipping immediate completion notification - scheduled notification will fire at \(scheduledTime)")
+    return
+}
+```
+
+This mechanism prevents duplicate notifications by tracking when scheduled notifications are set to fire, ensuring that immediate notifications aren't sent if a scheduled notification is already pending.
+
+### Multi-Layer Duplicate Prevention
+
+The app implements multiple layers of protection against duplicate audio cues and notifications:
+
+1. **Set-based tracking**: Using `Set<Int>` to track which warnings have been played
+2. **Timestamp-based tracking**: Using `[Int: Date]` to track when warnings were last played
+3. **State flags**: Using boolean flags to track warning states
+4. **Time-based throttling**: Using time windows (10 seconds) to prevent duplicates
+5. **Scheduled time tracking**: Tracking when notifications are scheduled to fire
+
+These technical implementations ensure reliable audio cues and notifications when the app is in the background, providing a seamless user experience during interval training workouts, even with very short intervals and multiple background-foreground transitions.
