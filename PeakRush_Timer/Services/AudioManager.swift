@@ -40,9 +40,19 @@ class AudioManager: NSObject {
                 options: [.mixWithOthers, .duckOthers]
             )
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            
             print("Audio session configured for background playback with mixing")
         } catch {
             print("Failed to set up audio session: \(error.localizedDescription)")
+            
+            // Retry with simpler configuration if the first attempt fails
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback)
+                try AVAudioSession.sharedInstance().setActive(true)
+                print("Audio session configured with fallback settings")
+            } catch {
+                print("Failed to set up audio session with fallback settings: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -137,11 +147,27 @@ class AudioManager: NSObject {
     }
     
     func playSound() -> Bool {
-        // Ensure audio session is active
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            print("Failed to activate audio session: \(error.localizedDescription)")
+        // Ensure audio session is active with retry mechanism
+        var audioSessionActive = false
+        for attempt in 1...3 {
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                audioSessionActive = true
+                if attempt > 1 {
+                    print("Audio session activated on attempt \(attempt)")
+                }
+                break
+            } catch {
+                print("Failed to activate audio session (attempt \(attempt)): \(error.localizedDescription)")
+                // Short delay before retry
+                if attempt < 3 {
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+            }
+        }
+        
+        if !audioSessionActive {
+            print("Failed to activate audio session after multiple attempts")
             return false
         }
         
@@ -151,6 +177,8 @@ class AudioManager: NSObject {
                 audioPlayer = try AVAudioPlayer(contentsOf: url)
                 audioPlayer?.prepareToPlay()
                 audioPlayer?.delegate = self
+                // Set volume to maximum for better audibility in background
+                audioPlayer?.volume = 1.0
             } catch {
                 print("Failed to recreate audio player: \(error.localizedDescription)")
                 return false
@@ -167,16 +195,37 @@ class AudioManager: NSObject {
         audioPlayer?.currentTime = 0
         audioPlaybackPosition = 0
         isAudioCuePlaying = true
-        let success = audioPlayer?.play() ?? false
         
-        if success {
-            print("Warning sound started playing successfully")
-        } else {
-            print("Failed to play warning sound")
+        // Try to play with retry mechanism
+        var playSuccess = false
+        for attempt in 1...3 {
+            if let player = audioPlayer {
+                playSuccess = player.play()
+                if playSuccess {
+                    if attempt > 1 {
+                        print("Warning sound started playing successfully on attempt \(attempt)")
+                    } else {
+                        print("Warning sound started playing successfully")
+                    }
+                    break
+                } else {
+                    print("Failed to play warning sound (attempt \(attempt))")
+                    // Short delay before retry
+                    if attempt < 3 {
+                        Thread.sleep(forTimeInterval: 0.1)
+                        // Try to reactivate audio session before retry
+                        try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                    }
+                }
+            }
+        }
+        
+        if !playSuccess {
+            print("Failed to play warning sound after multiple attempts")
             isAudioCuePlaying = false
         }
         
-        return success
+        return playSuccess
     }
     
     func stopSound() {
@@ -237,12 +286,28 @@ class AudioManager: NSObject {
     }
     
     // Method for speaking text
-    func speakText(_ text: String, rate: Float = 0.0, pitch: Float = 1.0, completion: (() -> Void)? = nil) -> Bool {
-        // Ensure audio session is active
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            print("Failed to activate audio session for speech: \(error.localizedDescription)")
+    func speakText(_ text: String, rate: Float = 0.3, pitch: Float = 1.0, completion: (() -> Void)? = nil) -> Bool {
+        // Ensure audio session is active with retry mechanism
+        var audioSessionActive = false
+        for attempt in 1...3 {
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                audioSessionActive = true
+                if attempt > 1 {
+                    print("Audio session activated for speech on attempt \(attempt)")
+                }
+                break
+            } catch {
+                print("Failed to activate audio session for speech (attempt \(attempt)): \(error.localizedDescription)")
+                // Short delay before retry
+                if attempt < 3 {
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+            }
+        }
+        
+        if !audioSessionActive {
+            print("Failed to activate audio session for speech after multiple attempts")
             return false
         }
         
@@ -251,7 +316,13 @@ class AudioManager: NSObject {
         utterance.rate = rate      // 0.0 (slowest) to 1.0 (fastest)
         utterance.pitchMultiplier = pitch  // 0.5 (low pitch) to 2.0 (high pitch)
         utterance.volume = 1.0     // 0.0 (silent) to 1.0 (loudest)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        
+        let voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = voice
+        print("Using standard en-US voice for speech")
+        
+        // Add pre-speech silence to ensure audio session is fully active
+        utterance.preUtteranceDelay = 0.1
         
         // Store completion handler if provided
         if let completion = completion {
@@ -260,12 +331,40 @@ class AudioManager: NSObject {
             speechCompletionHandler = nil
         }
         
-        // Start speaking
+        // Start speaking with retry mechanism
         isSpeechPlaying = true
-        speechSynthesizer?.speak(utterance)
-        print("Started speaking: \(text)")
+        var attemptSucceeded = false
         
-        return true
+        for attempt in 1...2 {
+            if let synthesizer = speechSynthesizer {
+                synthesizer.speak(utterance)
+                // Since speak() returns Void, we'll assume it started successfully
+                // unless we detect otherwise
+                attemptSucceeded = true
+                
+                if attempt > 1 {
+                    print("Started speaking on attempt \(attempt): \(text)")
+                } else {
+                    print("Started speaking: \(text)")
+                }
+                break
+            } else {
+                print("Failed to start speech (attempt \(attempt)) - synthesizer is nil")
+                // Short delay before retry
+                if attempt < 2 {
+                    Thread.sleep(forTimeInterval: 0.2)
+                    // Try to reactivate audio session before retry
+                    try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                }
+            }
+        }
+        
+        if !attemptSucceeded {
+            print("Failed to start speech after multiple attempts")
+            isSpeechPlaying = false
+        }
+        
+        return attemptSucceeded
     }
     
     func stopSpeech() {
@@ -285,7 +384,34 @@ class AudioManager: NSObject {
     
     // Method to check if any audio is playing (either speech or sound)
     func isAnyAudioPlaying() -> Bool {
-        return isPlaying() || isSpeaking()
+        let playing = isPlaying() || isSpeaking()
+        
+        // If we think audio is playing but the audio player or speech synthesizer disagrees,
+        // update our internal state to match reality
+        if isAudioCuePlaying && !isPlaying() {
+            isAudioCuePlaying = false
+        }
+        
+        if isSpeechPlaying && !isSpeaking() {
+            isSpeechPlaying = false
+        }
+        
+        return playing
+    }
+    
+    // Method to ensure audio session is active for background operation
+    func ensureAudioSessionActive() -> Bool {
+        do {
+            // Check if audio session is already active
+            if !AVAudioSession.sharedInstance().isOtherAudioPlaying {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                print("Audio session reactivated for background operation")
+            }
+            return true
+        } catch {
+            print("Failed to ensure audio session is active: \(error.localizedDescription)")
+            return false
+        }
     }
     
     // Property to store speech completion handler

@@ -18,18 +18,22 @@ import UserNotifications
 class TimerRunViewModel: ObservableObject {
     @Published var timerModel: TimerModel
     
+    // Published property to track phase transitions for UI animation control
+    @Published var isPhaseTransitioning = false
+    
     private var timer: Timer?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var lastActiveTimestamp: Date = Date()
     private var backgroundWarningTimes: [Date] = []
     private var backgroundCheckTimer: Timer?
+    private var backgroundRefreshTimer: Timer? // Added for better resource management
     private var warningSoundDuration: Int = 0
     private var lastStateChangeTime: Date = Date()
     private var minimumBackgroundTime: TimeInterval = 3.0
     private var lastTimerFireTime: Date = Date()
     
     private var setCompletionWarningTriggered = false
-    private var setCompletionWarningSeconds = 4
+    private var setCompletionWarningSeconds = 5
     
     private var playedSetCompletionWarnings: Set<Int> = []
     private var playedSetCompletionWarningsWithTime: [Int: Date] = [:]
@@ -37,6 +41,14 @@ class TimerRunViewModel: ObservableObject {
     private var hasScheduledCompletionNotification = false
     private var lastCompletionNotificationTime: Date? = nil
     private var scheduledNotificationCompletionTime: Date? = nil
+    
+    // Timer for managing phase transition animation state
+    private var phaseTransitionTimer: Timer?
+    
+    // Battery optimization flags
+    private var isLowPowerMode: Bool {
+        return ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
     
     // Enum to distinguish between warning types for background mode
     // Note: For setCompletion warnings, the stored setNumber is used only for scheduling.
@@ -179,20 +191,35 @@ class TimerRunViewModel: ObservableObject {
             let currentTime = Date()
             let timeSinceLastFire = currentTime.timeIntervalSince(self.lastTimerFireTime)
             
-            // If more than 1.5 seconds have passed since the last fire, 
-            // adjust for the extra time to prevent jumps
-            if timeSinceLastFire > 1.5 {
-                let extraSeconds = Int(timeSinceLastFire) - 1
-                print("Timer fired after \(timeSinceLastFire) seconds (adjusting for \(extraSeconds) extra seconds)")
+            // Enhanced timer firing compensation with more precise handling
+            if timeSinceLastFire > 1.2 {  // Lowered threshold for more accurate compensation
+                // Calculate exact number of seconds to catch up, including fractional part
+                let exactExtraSeconds = timeSinceLastFire - 1.0
+                let fullExtraSeconds = Int(exactExtraSeconds)
+                let fractionalPart = exactExtraSeconds - Double(fullExtraSeconds)
+                
+                print("Timer fired after \(String(format: "%.3f", timeSinceLastFire)) seconds (adjusting for \(fullExtraSeconds) full seconds + \(String(format: "%.3f", fractionalPart)) fractional)")
                 
                 // Update multiple times if needed to catch up
-                for _ in 0..<extraSeconds {
+                for _ in 0..<fullExtraSeconds {
+                    self.updateTimer()
+                }
+                
+                // For fractional parts over 0.7, add one more update
+                // This helps with accuracy for brief app switches
+                if fractionalPart > 0.7 {
+                    print("Adding extra update for large fractional part: \(String(format: "%.3f", fractionalPart))")
                     self.updateTimer()
                 }
             }
             
             self.lastTimerFireTime = currentTime
             self.updateTimer()
+        }
+        
+        // Ensure timer runs in common run loop mode for better reliability
+        if let activeTimer = timer {
+            RunLoop.current.add(activeTimer, forMode: .common)
         }
         
         print("Timer started/resumed at \(now)")
@@ -211,19 +238,42 @@ class TimerRunViewModel: ObservableObject {
     
     func stopTimer() {
         timerModel.isTimerRunning = false
+        
+        // Invalidate all timers
         timer?.invalidate()
         timer = nil
+        
         backgroundCheckTimer?.invalidate()
         backgroundCheckTimer = nil
+        
+        backgroundRefreshTimer?.invalidate()
+        backgroundRefreshTimer = nil
+        
+        phaseTransitionTimer?.invalidate()
+        phaseTransitionTimer = nil
+        
+        // Stop all audio
         stopWarningSound()
         audioManager.stopSpeech()
+        
+        // End background task and cancel notifications
         endBackgroundTask()
         cancelPendingNotifications()
+        
+        // Reset phase transition flag
+        isPhaseTransitioning = false
+        
+        print("Timer stopped and all resources released")
     }
     
     func resetTimer() {
         stopTimer()
         initializeTimer()
+        
+        // Reset phase transition flag and timer
+        isPhaseTransitioning = false
+        phaseTransitionTimer?.invalidate()
+        phaseTransitionTimer = nil
     }
     
     // MARK: - Private Methods
@@ -238,6 +288,15 @@ class TimerRunViewModel: ObservableObject {
             timerModel.currentMinutes -= 1
             timerModel.currentSeconds = 59
         } else {
+            // Phase transition is about to occur - set flag to control UI animations
+            isPhaseTransitioning = true
+            
+            // Schedule a timer to reset the phase transition flag after a short delay
+            phaseTransitionTimer?.invalidate()
+            phaseTransitionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                self?.isPhaseTransitioning = false
+            }
+            
             if timerModel.isCurrentIntensityLow {
                 timerModel.lowIntensityCompleted = true
             } else {
@@ -261,6 +320,9 @@ class TimerRunViewModel: ObservableObject {
             timerModel.currentSeconds = timerModel.seconds
             timerModel.isCurrentIntensityLow.toggle()
             timerModel.warningTriggered = false
+            
+            // Log phase transition for debugging UI stuttering issues
+            print("Phase transition: Set \(timerModel.currentSet), Phase: \(timerModel.isCurrentIntensityLow ? "Low" : "High")")
         }
     }
     
@@ -413,13 +475,16 @@ class TimerRunViewModel: ObservableObject {
                 scheduledNotificationCompletionTime = nil
                 
                 if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
-                    // Calculate how long the app was in background/inactive
+                    // Calculate how long the app was in background/inactive with precise timing
                     let timeSinceStateChange = now.timeIntervalSince(lastStateChangeTime)
-                    print("Time since state change: \(timeSinceStateChange) seconds")
+                    print("Time since state change: \(String(format: "%.3f", timeSinceStateChange)) seconds")
+                    
+                    // Log current timer state for debugging
+                    print("Current timer state - Set: \(timerModel.currentSet)/\(timerModel.sets), Time: \(timerModel.currentMinutes):\(timerModel.currentSeconds), Phase: \(timerModel.isCurrentIntensityLow ? "Low" : "High")")
                     
                     if timeSinceStateChange < minimumBackgroundTime {
                         // For very brief app switches, preserve the timer completely
-                        print("Brief app switch (\(timeSinceStateChange)s), preserving timer state")
+                        print("Brief app switch (\(String(format: "%.3f", timeSinceStateChange))s), preserving timer state")
                         
                         // If the timer was somehow invalidated, restart it without adjustment
                         if timer == nil {
@@ -427,12 +492,26 @@ class TimerRunViewModel: ObservableObject {
                             startTimer()
                         } else {
                             // Update the lastTimerFireTime to prevent jumps on the next timer fire
+                            // Calculate exact time since last fire to improve accuracy
+                            let timeSinceLastFire = now.timeIntervalSince(lastTimerFireTime)
+                            
+                            // If it's been more than 1 second since the last fire, we might need to update
+                            if timeSinceLastFire > 1.0 {
+                                let secondsToUpdate = Int(timeSinceLastFire)
+                                print("Time since last timer fire: \(String(format: "%.3f", timeSinceLastFire))s, updating \(secondsToUpdate) seconds")
+                                
+                                // Update the timer for each second that has passed
+                                for _ in 0..<secondsToUpdate {
+                                    updateTimer()
+                                }
+                            }
+                            
                             lastTimerFireTime = now
-                            print("Existing timer preserved, updated lastTimerFireTime")
+                            print("Existing timer preserved, updated lastTimerFireTime and synchronized timer state")
                         }
                     } else {
                         // For longer background durations, perform full adjustment
-                        print("Longer duration away (\(timeSinceStateChange)s), performing full adjustment")
+                        print("Longer duration away (\(String(format: "%.3f", timeSinceStateChange))s), performing full adjustment")
                         
                         // Properly clean up background resources
                         cleanupBackgroundResources()
@@ -461,6 +540,9 @@ class TimerRunViewModel: ObservableObject {
                 if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
                     beginBackgroundTask()
                     
+                    // Log current timer state before scheduling warnings
+                    print("Entering background - Current timer state - Set: \(timerModel.currentSet)/\(timerModel.sets), Time: \(timerModel.currentMinutes):\(timerModel.currentSeconds), Phase: \(timerModel.isCurrentIntensityLow ? "Low" : "High")")
+                    
                     // Schedule warnings based on current timer state.
                     // Note: The timer continues to advance internally while in background,
                     // so warnings will be played based on the actual timer state at the time
@@ -474,13 +556,25 @@ class TimerRunViewModel: ObservableObject {
                 print("App became inactive at \(now)")
                 lastStateChangeTime = now
                 
+                // Log current timer state when going inactive
+                if timerModel.isTimerRunning && !timerModel.isTimerCompleted {
+                    print("App becoming inactive - Current timer state - Set: \(timerModel.currentSet)/\(timerModel.sets), Time: \(timerModel.currentMinutes):\(timerModel.currentSeconds), Phase: \(timerModel.isCurrentIntensityLow ? "Low" : "High")")
+                }
+                
             @unknown default:
+                print("Unknown scene phase change at \(now)")
                 break
         }
     }
     
     private func beginBackgroundTask() {
         endBackgroundTask()
+        
+        // Check if we're in low power mode and adjust behavior accordingly
+        let inLowPowerMode = isLowPowerMode
+        if inLowPowerMode {
+            print("Device is in low power mode - optimizing background operation")
+        }
         
         backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
             print("Background task expired")
@@ -489,11 +583,33 @@ class TimerRunViewModel: ObservableObject {
         
         print("Started background task with ID: \(backgroundTaskID.rawValue)")
         
-        do {
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-            print("Audio session activated for background task")
-        } catch {
-            print("Failed to activate audio session for background: \(error.localizedDescription)")
+        // Only activate audio session if we have upcoming warnings or we're close to completion
+        let totalRemainingTime = calculateTotalRemainingTime()
+        let isNearCompletion = totalRemainingTime < 60 // Within a minute of completion
+        
+        // Calculate time to next warning
+        let now = Date()
+        var hasUpcomingWarnings = false
+        var timeToNextWarning: TimeInterval = 60.0
+        
+        if !scheduledWarnings.isEmpty {
+            let sortedWarnings = scheduledWarnings.sorted { $0.time < $1.time }
+            if let nextWarning = sortedWarnings.first {
+                timeToNextWarning = nextWarning.time.timeIntervalSince(now)
+                hasUpcomingWarnings = timeToNextWarning < 30.0 // Warning within 30 seconds
+            }
+        }
+        
+        // In low power mode, only activate audio session when absolutely necessary
+        if !inLowPowerMode || hasUpcomingWarnings || isNearCompletion {
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                print("Audio session activated for background task")
+            } catch {
+                print("Failed to activate audio session for background: \(error.localizedDescription)")
+            }
+        } else {
+            print("Delaying audio session activation to save battery - no imminent warnings or completion")
         }
         
         setupBackgroundAudioRefresh()
@@ -508,10 +624,23 @@ class TimerRunViewModel: ObservableObject {
     }
     
     private func cleanupBackgroundResources() {
+        // Invalidate and nil all background timers
         backgroundCheckTimer?.invalidate()
         backgroundCheckTimer = nil
+        
+        backgroundRefreshTimer?.invalidate()
+        backgroundRefreshTimer = nil
+        
+        // Clear warning arrays
         backgroundWarningTimes = []
         scheduledWarnings = []
+        
+        // Release any other resources that might consume battery
+        if audioManager.isAnyAudioPlaying() {
+            audioManager.stopSound()
+            audioManager.stopSpeech()
+        }
+        
         print("Background resources cleaned up")
     }
     
@@ -664,9 +793,9 @@ class TimerRunViewModel: ObservableObject {
                     // Check if we've played this warning recently (within 10 seconds)
                     if let lastPlayedTime = playedSetCompletionWarningsWithTime[actualSetNumber],
                        now.timeIntervalSince(lastPlayedTime) < 10.0 {
-                        print("Skipping duplicate set completion announcement for set \(actualSetNumber) - played \(now.timeIntervalSince(lastPlayedTime)) seconds ago")
-                        break
-                    }
+                            print("Skipping duplicate set completion announcement for set \(actualSetNumber) - played \(now.timeIntervalSince(lastPlayedTime)) seconds ago")
+                            break
+                        }
                     
                     let isFinalSet = actualSetNumber == timerModel.sets
                     
@@ -676,7 +805,7 @@ class TimerRunViewModel: ObservableObject {
                         playedSetCompletionWarningsWithTime[actualSetNumber] = now
                         
                         let setCompletionText = "Set \(actualSetNumber) completing in 3, 2, 1, 0"
-                        let _ = audioManager.speakText(setCompletionText, rate: 0.0)
+                        let _ = audioManager.speakText(setCompletionText, rate: 0.3)
                         print("Playing set completion announcement for set \(actualSetNumber) at \(now) (scheduled as set \(setNumber))")
                     } else {
                         print("Skipping duplicate set completion announcement for set \(actualSetNumber) at \(now)")
@@ -712,16 +841,19 @@ class TimerRunViewModel: ObservableObject {
     
     private func adjustTimerForBackgroundTime() {
         let now = Date()
-        let elapsedTime = Int(now.timeIntervalSince(lastActiveTimestamp))
+        // Use more precise time calculation with fractional seconds
+        let elapsedTimeExact = now.timeIntervalSince(lastActiveTimestamp)
+        let elapsedTime = Int(elapsedTimeExact)
+        let fractionalPart = elapsedTimeExact - Double(elapsedTime)
         
         // Don't adjust if elapsed time is too small or suspiciously large
         guard elapsedTime >= Int(minimumBackgroundTime) && elapsedTime < 3600 else {
-            print("Skipping timer adjustment - elapsed time: \(elapsedTime) seconds")
+            print("Skipping timer adjustment - elapsed time: \(String(format: "%.3f", elapsedTimeExact)) seconds")
             lastActiveTimestamp = now
             return
         }
             
-        print("Adjusting timer for background time: \(elapsedTime) seconds")
+        print("Adjusting timer for background time: \(String(format: "%.3f", elapsedTimeExact)) seconds (\(elapsedTime) seconds + \(String(format: "%.3f", fractionalPart)) fractional)")
         
         var remainingTimeToProcess = elapsedTime
         var currentSetNumber = timerModel.currentSet
@@ -730,6 +862,9 @@ class TimerRunViewModel: ObservableObject {
         var currentIntens = timerModel.isCurrentIntensityLow
         var lowPhaseCompleted = timerModel.lowIntensityCompleted
         var highPhaseCompleted = timerModel.highIntensityCompleted
+        
+        // Log initial state for debugging
+        print("Initial state - Set: \(currentSetNumber)/\(timerModel.sets), Time: \(currentMin):\(currentSec), Phase: \(currentIntens ? "Low" : "High"), Low completed: \(lowPhaseCompleted), High completed: \(highPhaseCompleted)")
         
         while remainingTimeToProcess > 0 && currentSetNumber <= timerModel.sets {
             let currentIntervalRemaining = currentMin * 60 + currentSec
@@ -740,8 +875,10 @@ class TimerRunViewModel: ObservableObject {
                 
                 if currentIntens {
                     lowPhaseCompleted = true
+                    print("Low intensity phase completed for set \(currentSetNumber)")
                 } else {
                     highPhaseCompleted = true
+                    print("High intensity phase completed for set \(currentSetNumber)")
                 }
                 
                 if lowPhaseCompleted && highPhaseCompleted {
@@ -749,24 +886,43 @@ class TimerRunViewModel: ObservableObject {
                         currentSetNumber += 1
                         lowPhaseCompleted = false
                         highPhaseCompleted = false
+                        print("Set \(currentSetNumber-1) completed, moving to set \(currentSetNumber)")
                     } else {
                         currentSetNumber = timerModel.sets // This ensures we know it's completed
                         currentMin = 0
                         currentSec = 0
                         remainingTimeToProcess = 0 // Stop processing
+                        print("All sets completed")
                         break
                     }
                 }
                 currentMin = timerModel.minutes
                 currentSec = timerModel.seconds
                 currentIntens.toggle()
+                print("Phase changed to \(currentIntens ? "Low" : "High") intensity")
                 
             } else {
                 // Partial completion of current interval
                 let newRemainingSeconds = currentIntervalRemaining - remainingTimeToProcess
                 currentMin = newRemainingSeconds / 60
                 currentSec = newRemainingSeconds % 60
+                print("Partial completion - \(remainingTimeToProcess) seconds processed, \(newRemainingSeconds) seconds remaining in current interval")
                 remainingTimeToProcess = 0
+            }
+        }
+        
+        // Account for fractional seconds by potentially decrementing one more second
+        // This improves accuracy for brief background periods
+        if fractionalPart > 0.7 && currentSec > 0 {
+            print("Adjusting for large fractional part (\(String(format: "%.3f", fractionalPart))): decrementing one more second")
+            currentSec -= 1
+            if currentSec < 0 {
+                if currentMin > 0 {
+                    currentMin -= 1
+                    currentSec = 59
+                } else {
+                    currentSec = 0
+                }
             }
         }
         
@@ -786,26 +942,86 @@ class TimerRunViewModel: ObservableObject {
             timerModel.isTimerRunning = false
             timerModel.currentMinutes = 0
             timerModel.currentSeconds = 0
+            print("Timer marked as completed")
         }
         
         lastActiveTimestamp = now
-        print("Timer adjusted to: \(timerModel.currentMinutes):\(timerModel.currentSeconds), Set \(timerModel.currentSet)/\(timerModel.sets)")
+        print("Timer adjusted to: \(timerModel.currentMinutes):\(timerModel.currentSeconds), Set \(timerModel.currentSet)/\(timerModel.sets), Phase: \(timerModel.isCurrentIntensityLow ? "Low" : "High"), Low completed: \(timerModel.lowIntensityCompleted), High completed: \(timerModel.highIntensityCompleted)")
     }
     
     private func setupBackgroundAudioRefresh() {
         // Create a timer that periodically reactivates the audio session
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        // Use adaptive refresh intervals to optimize battery usage
+        
+        // Calculate time to next warning
+        let now = Date()
+        var timeToNextWarning: TimeInterval = 60.0 // Default to 60 seconds if no warnings
+        
+        if !scheduledWarnings.isEmpty {
+            let sortedWarnings = scheduledWarnings.sorted { $0.time < $1.time }
+            if let nextWarning = sortedWarnings.first {
+                timeToNextWarning = nextWarning.time.timeIntervalSince(now)
+            }
+        }
+        
+        // Use more frequent refreshes when warnings are coming soon
+        let refreshInterval: TimeInterval
+        if timeToNextWarning <= 30.0 {
+            // More frequent refreshes when warnings are coming soon (within 30 seconds)
+            refreshInterval = 10.0
+            print("Using frequent audio refresh interval (10s) due to upcoming warnings")
+        } else if timeToNextWarning <= 120.0 {
+            // Medium frequency for warnings within 2 minutes
+            refreshInterval = 20.0
+            print("Using medium audio refresh interval (20s)")
+        } else {
+            // Less frequent refreshes for distant warnings to save battery
+            refreshInterval = 30.0
+            print("Using battery-saving audio refresh interval (30s)")
+        }
+        
+        let refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             
             if self.timerModel.isTimerRunning && !self.timerModel.isTimerCompleted {
-                do {
-                    try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-                    print("Periodically reactivated audio session")
-                } catch {
-                    print("Failed to reactivate audio session: \(error)")
+                // Only activate audio session if we have upcoming warnings or we're close to completion
+                let now = Date()
+                let hasUpcomingWarnings = !self.scheduledWarnings.isEmpty && 
+                    self.scheduledWarnings.contains { now.timeIntervalSince($0.time) > -30 && now.timeIntervalSince($0.time) < 30 }
+                
+                // Calculate time to completion
+                let totalRemainingTime = self.calculateTotalRemainingTime()
+                let isNearCompletion = totalRemainingTime < 60 // Within a minute of completion
+                
+                if hasUpcomingWarnings || isNearCompletion {
+                    do {
+                        try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                        print("Periodically reactivated audio session at \(Date())")
+                        
+                        // Log current timer state for debugging extended background sessions
+                        print("Background refresh - Current timer state - Set: \(self.timerModel.currentSet)/\(self.timerModel.sets), Time: \(self.timerModel.currentMinutes):\(self.timerModel.currentSeconds), Phase: \(self.timerModel.isCurrentIntensityLow ? "Low" : "High")")
+                        
+                        // Check if any warnings should be played soon
+                        if !self.scheduledWarnings.isEmpty {
+                            let soonWarnings = self.scheduledWarnings.filter { now.timeIntervalSince($0.time) > -10 && now.timeIntervalSince($0.time) < 10 }
+                            if !soonWarnings.isEmpty {
+                                print("Upcoming warnings in next 10 seconds: \(soonWarnings.count)")
+                            }
+                        }
+                    } catch {
+                        print("Failed to reactivate audio session: \(error)")
+                    }
+                } else {
+                    print("Skipping audio session activation - no upcoming warnings or completion")
                 }
             }
         }
+        
+        // Store the timer for cleanup
+        backgroundRefreshTimer = refreshTimer
+        
+        // Ensure timer runs in background
+        RunLoop.current.add(refreshTimer, forMode: .common)
     }
     
     // MARK: - Notification Methods
@@ -817,10 +1033,8 @@ class TimerRunViewModel: ObservableObject {
             return
         }
         
-        // Cancel any existing notifications first to prevent duplicates
         cancelPendingNotifications()
         
-        // Calculate remaining time more accurately
         var totalRemainingSeconds = calculateTotalRemainingTime()
         
         // For very short intervals, use a larger buffer
@@ -848,35 +1062,25 @@ class TimerRunViewModel: ObservableObject {
         }
     }
     
-    // More accurate calculation of total remaining time
     private func calculateTotalRemainingTime() -> Int {
-        // Current phase remaining time
         let currentPhaseTimeRemaining = timerModel.currentMinutes * 60 + timerModel.currentSeconds
         
-        // Start with current phase
         var totalRemainingSeconds = currentPhaseTimeRemaining
         
-        // Track phases we need to account for
         var phasesRemaining = 0
         
-        // Current set status
         let currentSet = timerModel.currentSet
         let isLowPhase = timerModel.isCurrentIntensityLow
         let lowCompleted = timerModel.lowIntensityCompleted
         let highCompleted = timerModel.highIntensityCompleted
         
-        // Calculate remaining phases in current set
         if isLowPhase && !lowCompleted && !highCompleted {
-            // We're in low phase, high phase still remains
             phasesRemaining += 1
         } else if !isLowPhase && lowCompleted && !highCompleted {
-            // We're in high phase, no more phases in this set
             phasesRemaining += 0
         } else if isLowPhase && lowCompleted && !highCompleted {
-            // We're in low phase (second time), no more phases in this set
             phasesRemaining += 0
         } else if !isLowPhase && !lowCompleted && !highCompleted {
-            // We're in high phase (started with high), low phase still remains
             phasesRemaining += 1
         }
         

@@ -155,6 +155,13 @@ struct TimerRunView: View {
                             Text("\(String(format: "%02d", viewModel.timerModel.currentMinutes)):\(String(format: "%02d", viewModel.timerModel.currentSeconds))")
                                 .font(.system(size: 48, weight: .bold, design: .monospaced))
                                 .foregroundStyle(.primary)
+                                .contentTransition(.numericText()) // Keep smooth transition for changing numbers
+                                .transaction { transaction in
+                                    // Disable animations for time updates to prevent stuttering
+                                    if viewModel.isPhaseTransitioning {
+                                        transaction.animation = nil
+                                    }
+                                }
                             
                             Text("Set \(viewModel.timerModel.currentSet)/\(viewModel.timerModel.sets)")
                                 .font(.title3)
