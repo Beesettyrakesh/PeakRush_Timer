@@ -166,7 +166,7 @@ struct TimerRunView: View {
                             Text("Set \(viewModel.timerModel.currentSet)/\(viewModel.timerModel.sets)")
                                 .font(.title3)
                                 .fontWeight(.medium)
-                                .foregroundStyle(.black)
+                                .foregroundStyle(.primary)
                         }
                     }
                 }

@@ -76,33 +76,13 @@ class TimerRunViewModel: ObservableObject {
     
     // MARK: - Public Properties
     
-    var circleColor: LinearGradient {
-        if !timerModel.isTimerRunning && !timerModel.isTimerCompleted {
-            return LinearGradient(
-                colors: [.gray, .gray],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        } else if timerModel.isTimerCompleted {
-            return LinearGradient(
-                colors: [.blue, .blue],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+    var circleColor: Color {
+        if timerModel.isTimerCompleted {
+            return Color.blue
+        } else if !timerModel.isTimerRunning {
+            return Color.gray
         } else {
-            if timerModel.isCurrentIntensityLow {
-                return LinearGradient(
-                    colors: [.green, .green],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else {
-                return LinearGradient(
-                    colors: [.red, .red],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
+            return timerModel.isCurrentIntensityLow ? Color.green : Color.red
         }
     }
     

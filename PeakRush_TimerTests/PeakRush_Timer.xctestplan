@@ -1,0 +1,54 @@
+{
+  "configurations" : [
+    {
+      "id" : "5F8C9D1A-B8D7-4F3E-9D5A-F7E3B6C4D2E1",
+      "name" : "Default",
+      "options" : {
+
+      }
+    },
+    {
+      "id" : "7A1B3C5D-E9F8-4D2C-B6A7-8E9D0F1C3B5A",
+      "name" : "With Code Coverage",
+      "options" : {
+        "commandLineArgumentEntries" : [
+
+        ],
+        "environmentVariableEntries" : [
+
+        ],
+        "targetForVariableExpansion" : {
+          "containerPath" : "container:PeakRush_Timer.xcodeproj",
+          "identifier" : "AA3A4A3D2E000133009EA24F",
+          "name" : "PeakRush_Timer"
+        }
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : {
+      "targets" : [
+        {
+          "containerPath" : "container:PeakRush_Timer.xcodeproj",
+          "identifier" : "AA3A4A3D2E000133009EA24F",
+          "name" : "PeakRush_Timer"
+        }
+      ]
+    },
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:PeakRush_Timer.xcodeproj",
+      "identifier" : "AA3A4A3D2E000133009EA24F",
+      "name" : "PeakRush_Timer"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:PeakRush_Timer.xcodeproj",
+        "identifier" : "AA7E58332E254FCE00706E03",
+        "name" : "PeakRush_TimerTests"
+      }
+    }
+  ],
+  "version" : 1
+}
