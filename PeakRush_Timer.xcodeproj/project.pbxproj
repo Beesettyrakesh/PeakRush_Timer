@@ -22,8 +22,8 @@
 
 /* Begin PBXFileReference section */
 		AA3A4A622E01CCB1009EA24F /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
-		AA7E582F2E2511BD00706E03 /* PeakRush_Timer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = PeakRush_Timer.app; path = "/Users/rakeshbeesetty/iOS/PeakRush_Timer/build/Debug-iphoneos/PeakRush_Timer.app"; sourceTree = "<absolute>"; };
 		AA7E58342E254FCE00706E03 /* PeakRush_TimerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PeakRush_TimerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AACA452E2E257AF700162DCE /* PeakRush_Timer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PeakRush_Timer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -64,6 +64,7 @@
 				AA3A4A622E01CCB1009EA24F /* LaunchScreen.storyboard */,
 				AA7E58342E254FCE00706E03 /* PeakRush_TimerTests.xctest */,
 				AA7E58352E254FCE00706E03 /* PeakRush_TimerTests */,
+				AACA452E2E257AF700162DCE /* PeakRush_Timer.app */,
 			);
 			sourceTree = "<group>";
 		};
@@ -89,7 +90,7 @@
 			packageProductDependencies = (
 			);
 			productName = PeakRush_Timer;
-			productReference = AA7E582F2E2511BD00706E03 /* PeakRush_Timer.app */;
+			productReference = AACA452E2E257AF700162DCE /* PeakRush_Timer.app */;
 			productType = "com.apple.product-type.application";
 		};
 		AA7E58332E254FCE00706E03 /* PeakRush_TimerTests */ = {

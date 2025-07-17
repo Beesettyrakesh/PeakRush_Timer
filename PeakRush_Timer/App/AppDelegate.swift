@@ -26,6 +26,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // Set up audio session for background playback
         AudioManager.shared.setupAudioSession()
         
+        // Start Metal error logging to monitor RenderBox framework errors
+        MetalErrorLogger.shared.startMonitoring()
+        
         // Register for low power mode notifications to optimize battery usage
         NotificationCenter.default.addObserver(
             self,

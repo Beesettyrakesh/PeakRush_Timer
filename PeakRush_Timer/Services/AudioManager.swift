@@ -15,6 +15,11 @@ class AudioManager: NSObject {
     private var isAudioCuePlaying = false
     private var isSpeechPlaying = false
     
+    // Audio session management
+    private var lastAudioSessionActivationTime: Date?
+    private var audioSessionActivationAttempts = 0
+    private var audioSessionKeepAliveTimer: Timer?
+    
     // Notification observer
     private var interruptionObserver: NSObjectProtocol?
     
@@ -32,15 +37,19 @@ class AudioManager: NSObject {
     }
     
     func setupAudioSession() {
+        // First deactivate any existing session
+        try? AVAudioSession.sharedInstance().setActive(false)
+        
         do {
             // Configure audio session for mixing with other audio
             try AVAudioSession.sharedInstance().setCategory(
                 .playback,
-                mode: .default,
-                options: [.mixWithOthers, .duckOthers]
+                mode: .spokenAudio, // Changed from .default to .spokenAudio for better reliability
+                options: [.mixWithOthers, .duckOthers, .interruptSpokenAudioAndMixWithOthers]
             )
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-            
+            lastAudioSessionActivationTime = Date()
+            audioSessionActivationAttempts = 0
             print("Audio session configured for background playback with mixing")
         } catch {
             print("Failed to set up audio session: \(error.localizedDescription)")
@@ -49,11 +58,108 @@ class AudioManager: NSObject {
             do {
                 try AVAudioSession.sharedInstance().setCategory(.playback)
                 try AVAudioSession.sharedInstance().setActive(true)
+                lastAudioSessionActivationTime = Date()
                 print("Audio session configured with fallback settings")
             } catch {
                 print("Failed to set up audio session with fallback settings: \(error.localizedDescription)")
             }
         }
+    }
+    
+    // Start a timer to keep the audio session alive
+    func startAudioSessionKeepAlive() {
+        stopAudioSessionKeepAlive()
+        audioSessionKeepAliveTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+            self?.refreshAudioSession()
+        }
+        RunLoop.current.add(audioSessionKeepAliveTimer!, forMode: .common)
+        print("Audio session keep-alive timer started")
+    }
+    
+    // Stop the keep-alive timer
+    func stopAudioSessionKeepAlive() {
+        audioSessionKeepAliveTimer?.invalidate()
+        audioSessionKeepAliveTimer = nil
+    }
+    
+    // Refresh the audio session periodically
+    private func refreshAudioSession() {
+        // Only refresh if not currently playing audio
+        if !isAnyAudioPlaying() {
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                lastAudioSessionActivationTime = Date()
+                audioSessionActivationAttempts = 0
+                print("Audio session refreshed at \(Date())")
+            } catch {
+                print("Failed to refresh audio session: \(error)")
+                // Reset audio session if too many failures
+                if audioSessionActivationAttempts > 3 {
+                    resetAudioSession()
+                }
+                audioSessionActivationAttempts += 1
+            }
+        }
+    }
+    
+    // Reset the audio session completely
+    private func resetAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(false)
+            Thread.sleep(forTimeInterval: 0.5)
+            setupAudioSession()
+            print("Audio session reset completed")
+        } catch {
+            print("Failed to reset audio session: \(error)")
+        }
+    }
+    
+    // Enhanced audio session recovery with multiple strategies
+    private func recoverAudioSession() {
+        print("Attempting to recover audio session with multiple strategies")
+        
+        // First completely deactivate
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        
+        // Short delay to allow system resources to reset
+        Thread.sleep(forTimeInterval: 0.5)
+        
+        // Try different audio session categories and modes
+        let categories: [(AVAudioSession.Category, AVAudioSession.Mode)] = [
+            (.playback, .spokenAudio),
+            (.playback, .default),
+            (.playAndRecord, .default),
+            (.ambient, .default)
+        ]
+        
+        for (category, mode) in categories {
+            do {
+                try AVAudioSession.sharedInstance().setCategory(category, mode: mode)
+                try AVAudioSession.sharedInstance().setActive(true)
+                lastAudioSessionActivationTime = Date()
+                print("Recovered audio session with category: \(category), mode: \(mode)")
+                return
+            } catch {
+                print("Failed to recover with category \(category): \(error)")
+            }
+        }
+        
+        // If all attempts failed, try one more time with the default setup
+        print("All recovery attempts failed, trying default setup")
+        setupAudioSession()
+    }
+    
+    // Check if the audio session is healthy
+    func isAudioSessionHealthy() -> Bool {
+        // Check if session was activated recently (within 60 seconds)
+        if let lastActivation = lastAudioSessionActivationTime,
+           Date().timeIntervalSince(lastActivation) < 60 {
+            return true
+        }
+        
+        // Check session status directly - isOtherAudioPlaying is a property that doesn't throw
+        let isActive = AVAudioSession.sharedInstance().isOtherAudioPlaying == false
+        return isActive
     }
     
     private func setupNotifications() {
@@ -285,8 +391,45 @@ class AudioManager: NSObject {
         return false
     }
     
+    // Cache for voice to avoid repeated lookups
+    private var cachedVoice: AVSpeechSynthesisVoice?
+    
+    // Get a voice with caching and fallback mechanisms
+    private func getVoice() -> AVSpeechSynthesisVoice {
+        // Return cached voice if available
+        if let cached = cachedVoice {
+            return cached
+        }
+        
+        // Try to get preferred voice
+        if let voice = AVSpeechSynthesisVoice(language: "en-US") {
+            cachedVoice = voice
+            return voice
+        }
+        
+        // Fallback to any available voice
+        if let anyVoice = AVSpeechSynthesisVoice.speechVoices().first {
+            print("Using fallback voice: \(anyVoice.language)")
+            cachedVoice = anyVoice
+            return anyVoice
+        }
+        
+        // Create a basic voice as last resort
+        let basicVoice = AVSpeechSynthesisVoice(language: "en-US")!
+        cachedVoice = basicVoice
+        return basicVoice
+    }
+    
     // Method for speaking text
     func speakText(_ text: String, rate: Float = 0.3, pitch: Float = 1.0, completion: (() -> Void)? = nil) -> Bool {
+        // If text is empty and we have a completion handler, just call it and return
+        if text.isEmpty && completion != nil {
+            DispatchQueue.main.async {
+                completion?()
+            }
+            return true
+        }
+        
         // Ensure audio session is active with retry mechanism
         var audioSessionActive = false
         for attempt in 1...3 {
@@ -308,6 +451,8 @@ class AudioManager: NSObject {
         
         if !audioSessionActive {
             print("Failed to activate audio session for speech after multiple attempts")
+            // Try to recover the audio session
+            recoverAudioSession()
             return false
         }
         
@@ -317,9 +462,9 @@ class AudioManager: NSObject {
         utterance.pitchMultiplier = pitch  // 0.5 (low pitch) to 2.0 (high pitch)
         utterance.volume = 1.0     // 0.0 (silent) to 1.0 (loudest)
         
-        let voice = AVSpeechSynthesisVoice(language: "en-US")
+        // Get voice with caching and fallback
+        let voice = getVoice()
         utterance.voice = voice
-        print("Using standard en-US voice for speech")
         
         // Add pre-speech silence to ensure audio session is fully active
         utterance.preUtteranceDelay = 0.1
@@ -401,15 +546,38 @@ class AudioManager: NSObject {
     
     // Method to ensure audio session is active for background operation
     func ensureAudioSessionActive() -> Bool {
-        do {
-            // Check if audio session is already active
-            if !AVAudioSession.sharedInstance().isOtherAudioPlaying {
-                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-                print("Audio session reactivated for background operation")
-            }
+        // If session is already healthy, no need to reactivate
+        if isAudioSessionHealthy() {
             return true
+        }
+        
+        // Try to reactivate with multiple attempts
+        for attempt in 1...3 {
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                lastAudioSessionActivationTime = Date()
+                print("Audio session reactivated for background operation (attempt \(attempt))")
+                return true
+            } catch {
+                print("Failed to ensure audio session is active (attempt \(attempt)): \(error.localizedDescription)")
+                
+                // Short delay before retry
+                if attempt < 3 {
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+            }
+        }
+        
+        // If all attempts failed, try resetting the session
+        resetAudioSession()
+        
+        // Check if reset helped
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            lastAudioSessionActivationTime = Date()
+            return true  // If no exception is thrown, activation was successful
         } catch {
-            print("Failed to ensure audio session is active: \(error.localizedDescription)")
+            print("Failed to activate audio session even after reset: \(error)")
             return false
         }
     }

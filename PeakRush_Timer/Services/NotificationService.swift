@@ -10,6 +10,11 @@ class NotificationService {
     // Track pending notification identifiers
     private var pendingNotificationIdentifiers: [String] = []
     
+    // Track sent notification history to prevent duplicates
+    private var recentNotificationHistory: [(identifier: String, timestamp: Date)] = []
+    private let notificationHistoryLimit = 10
+    private let notificationDeduplicationWindow: TimeInterval = 30.0 // 30 seconds
+    
     init() {
         requestNotificationPermission()
         
@@ -60,6 +65,19 @@ class NotificationService {
             return
         }
         
+        // Check for recent similar notifications to prevent duplicates
+        let now = Date()
+        let notificationKey = "\(title)|\(body)"
+        
+        // Clean up old notification history entries
+        cleanupNotificationHistory()
+        
+        // Check if we've sent a similar notification recently
+        if hasRecentlySentSimilarNotification(key: notificationKey, within: notificationDeduplicationWindow) {
+            print("Skipping duplicate immediate notification - similar notification sent recently")
+            return
+        }
+        
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -74,8 +92,8 @@ class NotificationService {
         // Increase notification priority
         content.relevanceScore = 1.0
         
-        // Generate a unique identifier
-        let identifier = "immediate-\(UUID().uuidString)"
+        // Generate a unique identifier with a key for deduplication
+        let identifier = "immediate-\(notificationKey.hashValue)-\(UUID().uuidString)"
             
         let request = UNNotificationRequest(
             identifier: identifier,
@@ -85,6 +103,9 @@ class NotificationService {
         
         // Track this notification
         pendingNotificationIdentifiers.append(identifier)
+        
+        // Add to notification history
+        addToNotificationHistory(identifier: notificationKey, timestamp: now)
             
         UNUserNotificationCenter.current().add(request) { [weak self] error in
             if let error = error {
@@ -108,8 +129,20 @@ class NotificationService {
             return
         }
         
+        // Check for recent similar notifications to prevent duplicates
+        let notificationKey = "\(title)|\(body)"
+        
+        // Clean up old notification history entries
+        cleanupNotificationHistory()
+        
+        // Check if we've sent a similar notification recently
+        if hasRecentlySentSimilarNotification(key: notificationKey, within: notificationDeduplicationWindow) {
+            print("Skipping scheduled notification - similar notification sent recently")
+            return
+        }
+        
         // Cancel any existing notification with this identifier
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [identifier])
+        cancelNotification(withIdentifier: identifier)
         
         let content = UNMutableNotificationContent()
         content.title = title
@@ -124,6 +157,15 @@ class NotificationService {
         
         // Increase notification priority
         content.relevanceScore = 1.0
+        
+        // Add user info to help with deduplication
+        content.userInfo = [
+            "scheduledAt": Date().timeIntervalSince1970,
+            "notificationKey": notificationKey
+        ]
+        
+        // Calculate the scheduled delivery time for logging
+        let scheduledTime = Date().addingTimeInterval(timeInterval)
         
         // For better reliability with system termination, schedule two notifications:
         // 1. The main notification at the requested time
@@ -144,11 +186,14 @@ class NotificationService {
         // Track this notification
         pendingNotificationIdentifiers.append(identifier)
         
+        // Add to notification history - use scheduled time as the timestamp
+        addToNotificationHistory(identifier: notificationKey, timestamp: scheduledTime)
+        
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
                 print("Failed to schedule notification: \(error.localizedDescription)")
             } else {
-                print("Notification scheduled with identifier: \(identifier) for \(timeInterval) seconds from now")
+                print("Notification scheduled with identifier: \(identifier) for \(timeInterval) seconds from now (at \(scheduledTime))")
             }
         }
         
@@ -167,6 +212,13 @@ class NotificationService {
             // Modify the body slightly to indicate it's a backup
             backupContent.body = "\(body) (Reminder)"
             
+            // Add user info to help with deduplication
+            backupContent.userInfo = [
+                "scheduledAt": Date().timeIntervalSince1970,
+                "notificationKey": notificationKey,
+                "isBackup": true
+            ]
+            
             let backupRequest = UNNotificationRequest(
                 identifier: backupIdentifier,
                 content: backupContent,
@@ -180,7 +232,7 @@ class NotificationService {
                 if let error = error {
                     print("Failed to schedule backup notification: \(error.localizedDescription)")
                 } else {
-                    print("Backup notification scheduled with identifier: \(backupIdentifier)")
+                    print("Backup notification scheduled with identifier: \(backupIdentifier) for \(timeInterval + 15) seconds from now")
                 }
             }
         }
@@ -190,6 +242,40 @@ class NotificationService {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         pendingNotificationIdentifiers.removeAll()
         print("All pending notifications cancelled")
+    }
+    
+    // MARK: - Notification History Management
+    
+    // Add a notification to the history
+    private func addToNotificationHistory(identifier: String, timestamp: Date) {
+        recentNotificationHistory.append((identifier: identifier, timestamp: timestamp))
+        
+        // Keep history size under control
+        if recentNotificationHistory.count > notificationHistoryLimit {
+            recentNotificationHistory.removeFirst()
+        }
+    }
+    
+    // Clean up old notification history entries
+    private func cleanupNotificationHistory() {
+        let now = Date()
+        recentNotificationHistory = recentNotificationHistory.filter { 
+            now.timeIntervalSince($0.timestamp) < notificationDeduplicationWindow
+        }
+    }
+    
+    // Check if we've sent a similar notification recently
+    private func hasRecentlySentSimilarNotification(key: String, within timeWindow: TimeInterval) -> Bool {
+        let now = Date()
+        
+        for entry in recentNotificationHistory {
+            if entry.identifier == key && now.timeIntervalSince(entry.timestamp) < timeWindow {
+                print("Found similar notification sent at \(entry.timestamp), \(now.timeIntervalSince(entry.timestamp)) seconds ago")
+                return true
+            }
+        }
+        
+        return false
     }
     
     func cancelNotification(withIdentifier identifier: String) {
